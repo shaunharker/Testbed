@@ -188,17 +188,19 @@ def trainer_worker(inbox, outbox):
     outbox.put("ready")
     model = inbox.get()
     dataset = inbox.get()
-    dataloader = DataLoader(dataset)
     optimizer = inbox.get()
     reporter = Reporter()
+    data = []
     while True:
+        print("Waiting for instruction.")
         instruction = inbox.get()
+        print(f"Received instruction '{instruction}'.")
         if instruction == "start":
-            for X in dataloader:
+            for X in DataLoader(dataset):
                 try:
                     instruction = inbox.get(False)
                     if instruction != "start":
-                        print(f"Interrupted by instruction '{instruction}'")
+                        print(f"Interrupted by instruction '{instruction}'.")
                         break
                 except:
                     pass
@@ -207,14 +209,20 @@ def trainer_worker(inbox, outbox):
                 loss.backward()
                 optimizer.step()
                 reporter.step(loss.item())
-            print("dataloader extinguished")
+                data.append((reporter.n, time.time(), loss.item()))
+            print("Exiting compute loop.")
+        if instruction == "loss":
+            print("Sending loss data.")
+            outbox.put(data)
+            continue
         if instruction == "pause":
             continue
         if instruction == "stop":
             break
         if instruction == "debug":
-            print('n', reporter.n)
-            print('optim', optimizer.state_dict())
+            print("Debug information:")
+            print('  n', reporter.n)
+            print('  optim', optimizer.state_dict())
             continue
 
 class Trainer:
@@ -232,14 +240,12 @@ class Trainer:
         self.inbox = Queue()
         self.outbox = Queue()
         self.running = False
-        self.paused = False
+        self.paused = None
 
     def status(self):
         return f"Running: {self.running}\nPaused: {self.paused}"
 
     def start(self):
-        if self.running == True and self.paused == False:
-            return
         if self.running == False:
             self.process = Process(target=trainer_worker, args=(self.outbox, self.inbox))
             self.process.start()
@@ -248,14 +254,22 @@ class Trainer:
             self.outbox.put(self.dataset)
             self.outbox.put(self.optimizer)
             self.running = True
-            self.paused = True
-        if self.paused == True:
-            self.outbox.put("start")
-            self.running = True
-            self.paused = False
+        self.outbox.put("start")
+        self.running = True
+        self.paused = False
+
+    def loss(self):
+        if self.running == True:
+            self.outbox.put("loss")
+            data = self.inbox.get()
+            if not self.paused:
+                self.outbox.put("start")
+            return data
+        else:
+            return []
 
     def pause(self):
-        if self.running == True and self.paused == False:
+        if self.running == True:
             self.outbox.put("pause")
             self.paused = True
 
@@ -263,11 +277,14 @@ class Trainer:
         if self.running == True:
             print(self.optimizer.state_dict())
             self.outbox.put("debug")
+            self.paused = True
 
     def stop(self):
         if self.running == True:
             self.outbox.put("stop")
             self.running = False
+            self.paused = None
+            self.process.join()
 
     def load(self, path=None):
         # todo: default load of last step, load opt
