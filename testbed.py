@@ -1,13 +1,18 @@
+import copy, time, datetime, os
+import math
 import numpy as np
-import math, copy, time, datetime, os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, IterableDataset
-from torch.multiprocessing import Process, Queue
-from random import randint, randrange
 
+import torch.multiprocessing
+ctx = torch.multiprocessing.get_context("spawn")
+Process = ctx.Process
+Queue = ctx.Queue
+
+from random import randint, randrange
 from statistics import median
 
 
@@ -86,6 +91,8 @@ class Net0(nn.Module):
         return f"net0_H{self.H}_L{self.L}_K{self.K}_C{self.C}"
 
     def forward(self, X):
+        L = self.L
+        K = self.K
         x = self.embedding(X[...,-L-1:-1])
         y = X[...,-1].reshape((-1,))
         x = x.reshape(-1,L*K)
@@ -94,6 +101,8 @@ class Net0(nn.Module):
         return loss
 
     def probs(self, x):
+        L = self.L
+        K = self.K
         x = self.embedding(x[...,-L:])
         x = x.reshape(-1,L*K)
         x = self.fc2(torch.sigmoid(self.fc1(x)))
@@ -152,75 +161,38 @@ def numel(model):
 
 class Reporter:
     def __init__(self,
-                 model,
                  logfile = None,
                  time_between_report=1.0,
                  time_between_autocomplete=60.0,
                  time_between_saves=3600.0) :
-        self.model = model
-        self.writer = None
         self.n = 0
         if logfile is None:
             logfile = str(time.time()) + '.log'
         self.logfile = logfile
         self.log = open(logfile, 'a')
-        self.initial_time = time.time() #seconds since 1970 jan 1
-        self.loss_series = []
-        self.avg_loss_series = []
-        self.time_between_report = time_between_report
-        self.time_between_autocomplete = time_between_autocomplete
-        self.time_between_saves = time_between_saves
-        self.last_report =  self.initial_time
-        self.last_autocomplete = self.initial_time
-        self.last_save = self.initial_time
-
-    def statistics(self):
-        if len(self.loss_series) < 2:
-            return {}
-
-        trailing_steps = min(len(self.loss_series), 1000)
-        trailing_loss = self.loss_series[-trailing_steps:]
-
-        avg_loss = sum(trailing_loss) / len(trailing_loss)
-        median_loss = median(trailing_loss)
-        if trailing_steps > 1:
-            var_loss = sum( (x-avg_loss)*(x-avg_loss) for x in trailing_loss ) / (trailing_steps - 1)
-        else:
-            var_loss = 0
-
-        return {"date" : datetime.datetime.now().strftime("%y-%m-%d-%H:%M:%S:"),
-                "step" : self.n,
-                "time" : time.time(),
-                "loss" : self.loss_series[-1],
-                "mean_loss" : avg_loss,
-                "median_loss" : median_loss,
-                "var_loss" : var_loss }
+        self.log.write('date,step,time,loss\n')
 
     def step(self, loss):
-
-        # Get loss sequences straightened out
-        self.loss_series.append(loss)
         self.n = self.n + 1
+        self.log.write(','.join([
+            datetime.datetime.now().strftime("%y-%m-%d-%H:%M:%S"),
+            str(self.n),
+            str(time.time()),
+            str(loss)])+'\n')
 
-        # Interrupts
-        self.current_time = time.time()
-        if self.current_time - self.last_report > self.time_between_report:
-            time.time(), loss,
-            #print(),
-            #  f"\n    Step {self.n}\n    Elapsed {self.current_time-self.initial_time}.")
-            self.last_report = self.current_time
-            stats = self.statistics()
-            for k in ["date", "step", "time", "loss"]:
-                self.log.write(stats[k])
-
-def trainer_worker(q):
-    (model, dataloader, optimizer, reporter) = q.get()
+def trainer_worker(inbox, outbox):
+    outbox.put("ready")
+    model = inbox.get()
+    dataset = inbox.get()
+    dataloader = DataLoader(dataset)
+    optimizer = inbox.get()
+    reporter = Reporter()
     while True:
-        instruction = q.get()
+        instruction = inbox.get()
         if instruction == "start":
             for (n, X) in enumerate(dataloader):
                 try:
-                    instruction = q.get(False)
+                    instruction = inbox.get(False)
                     if instruction != "start":
                         break
                 except:
@@ -235,61 +207,61 @@ def trainer_worker(q):
         if instruction == "stop":
             break
         if instruction == "sync":
-            q.put((model, dataloader, optimizer, reporter))
+            outbox.put((model, optimizer))
 
 class Trainer:
     def __init__(self,
                  model,
                  dataset,
-                 dataloader,
-                 optimizer=None,
-                 reporter=None):
-        if reporter is None:
-            reporter = Reporter(model)
+                 optimizer=None):
         if optimizer is None:
             optimizer = torch.optim.AdamW(model.parameters())
         self.model = model
         self.dataset = dataset
-        self.dataloader = dataloader
         self.optimizer = optimizer
-        self.reporter = reporter
-        self.queue = Queue()
+        self.inbox = Queue()
+        self.outbox = Queue()
         self.running = False
         self.paused = False
 
     def status(self):
-        return "Running: {self.running}\nPaused: {self.paused}"
+        return f"Running: {self.running}\nPaused: {self.paused}"
 
     def sync(self):
         if self.running == True:
-            self.queue.put("sync")
-            (self.model, self.dataloader, self.optimizer, self.reporter) = self.queue.get()
+            self.outbox.put("sync")
+            (self.model, self.optimizer) = self.inbox.get()
 
     def start(self):
         if self.running == True and self.paused == False:
             # No effect
             return
         if self.running == False:
-            self.process = Process(target=trainer_worker, args=(self.queue,))
+            self.process = Process(target=trainer_worker, args=(self.outbox, self.inbox))
             self.process.start()
-            self.queue.put((self.model, self.dataloader, self.optimizer, self.reporter))
+            ready = self.inbox.get() # Wait for ready.
+            print(ready, "... putting 4-tuple")
+            self.outbox.put(self.model)
+            self.outbox.put(self.dataset)
+            self.outbox.put(self.optimizer)
             self.running = True
             self.paused = True
         if self.paused == True:
-            self.queue.put("start")
+            print('put start')
+            self.outbox.put("start")
             self.running = True
             self.paused = False
 
     def pause(self):
         if self.running == True and self.paused == False:
-            self.queue.put("pause")
+            self.outbox.put("pause")
             self.paused = True
 
     def stop(self, sync_first=True):
         if sync_first:
             self.sync()
         if self.running == True:
-            self.queue.put("stop")
+            self.outbox.put("stop")
             self.running = False
 
     def load(self, path=None):
