@@ -1,3 +1,7 @@
+# testbed.py
+# Shaun Harker
+# 2021-06-20
+
 import copy, time, datetime, os
 import math
 import numpy as np
@@ -190,10 +194,11 @@ def trainer_worker(inbox, outbox):
     while True:
         instruction = inbox.get()
         if instruction == "start":
-            for (n, X) in enumerate(dataloader):
+            for X in dataloader:
                 try:
                     instruction = inbox.get(False)
                     if instruction != "start":
+                        print(f"Interrupted by instruction '{instruction}'")
                         break
                 except:
                     pass
@@ -202,12 +207,15 @@ def trainer_worker(inbox, outbox):
                 loss.backward()
                 optimizer.step()
                 reporter.step(loss.item())
+            print("dataloader extinguished")
         if instruction == "pause":
             continue
         if instruction == "stop":
             break
-        if instruction == "sync":
-            outbox.put((model, optimizer))
+        if instruction == "debug":
+            print('n', reporter.n)
+            print('optim', optimizer.state_dict())
+            continue
 
 class Trainer:
     def __init__(self,
@@ -216,6 +224,8 @@ class Trainer:
                  optimizer=None):
         if optimizer is None:
             optimizer = torch.optim.AdamW(model.parameters())
+            optimizer.step() # so state_dict is initialized (multiprocessing issue)
+            print(optimizer.state_dict())
         self.model = model
         self.dataset = dataset
         self.optimizer = optimizer
@@ -227,27 +237,19 @@ class Trainer:
     def status(self):
         return f"Running: {self.running}\nPaused: {self.paused}"
 
-    def sync(self):
-        if self.running == True:
-            self.outbox.put("sync")
-            (self.model, self.optimizer) = self.inbox.get()
-
     def start(self):
         if self.running == True and self.paused == False:
-            # No effect
             return
         if self.running == False:
             self.process = Process(target=trainer_worker, args=(self.outbox, self.inbox))
             self.process.start()
             ready = self.inbox.get() # Wait for ready.
-            print(ready, "... putting 4-tuple")
             self.outbox.put(self.model)
             self.outbox.put(self.dataset)
             self.outbox.put(self.optimizer)
             self.running = True
             self.paused = True
         if self.paused == True:
-            print('put start')
             self.outbox.put("start")
             self.running = True
             self.paused = False
@@ -257,9 +259,12 @@ class Trainer:
             self.outbox.put("pause")
             self.paused = True
 
-    def stop(self, sync_first=True):
-        if sync_first:
-            self.sync()
+    def debug(self):
+        if self.running == True:
+            print(self.optimizer.state_dict())
+            self.outbox.put("debug")
+
+    def stop(self):
         if self.running == True:
             self.outbox.put("stop")
             self.running = False
@@ -277,7 +282,6 @@ class Trainer:
         torch.save(self.model, path)
 
     def autocomplete(self, prompt="", N=1024):
-        self.sync()
         was_paused = self.running and self.paused
         self.pause()
         L = model.L
