@@ -2,7 +2,7 @@
 # Shaun Harker
 # 2021-06-20
 
-import copy, time, datetime, os
+import copy, time, datetime, os, signal
 import math
 import numpy as np
 import torch
@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, IterableDataset
+from stopwatch import Stopwatch
 
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
@@ -57,27 +58,26 @@ def default_device():
 class TextDataset:
     def __init__(self,
                  filename='minicorpus.txt',
-                 B=1,
                  N=64,
                  device=None):
         with open('minicorpus.txt', 'r') as infile:
             self.text = infile.read()
-        self.tokens = list(bytes(self.text, 'utf-8'))
-        self.B = B
+        try:
+            self.tokens = torch.load('minicorpus.pt')
+        except:
+            self.tokens = torch.tensor(list(bytes(self.text, 'utf-8')))
+            torch.save(self.tokens, 'minicorpus.pt')
         self.N = N
-        self.D = len(self.tokens) // (B*N)
+        self.D = len(self.tokens) // N
         self.perm = list(range(self.D))
-        self.batches = [None]*self.D
         if device is None:
             device = default_device()
         self.device = device
 
     def __getitem__(self, idx):
-        k = self.B*self.N
+        N = self.N
         idx = self.perm[idx]
-        if self.batches[idx] is None:
-            self.batches[idx] = torch.tensor(self.tokens[k*idx:k*(idx+1)]).reshape(self.B, self.N)
-        return self.batches[idx].to(self.device)
+        return self.tokens[N*idx:N*(idx+1)].to(self.device)
 
     def __len__(self):
         return self.D
@@ -199,64 +199,109 @@ class Reporter:
             str(time.time()),
             str(loss)])+'\n')
 
-def trainer_worker(inbox, outbox):
-    outbox.put("ready")
-    model = inbox.get()
-    dataset = inbox.get()
-    UserOptimizer = inbox.get()
-    optimizer = UserOptimizer(model.parameters())
-    reporter = Reporter()
-    data = []
-    while True:
-        print(f"Waiting for instruction. {reporter.n} steps so far.")
-        instruction = inbox.get()
-        print(f"Received instruction '{instruction}'.")
-        if instruction == "start":
-            for X in DataLoader(dataset):
-                X = X.reshape(X.shape[1:])
-                try:
-                    instruction = inbox.get(False)
-                    if instruction != "start":
-                        print(f"Interrupted by instruction '{instruction}'.")
-                        break
-                except:
-                    pass
-                optimizer.zero_grad()
-                loss = model(X)
-                loss.backward()
-                optimizer.step()
-                reporter.step(loss.item())
-                data.append((reporter.n, time.time(), loss.item()))
-            print("Exiting compute loop.")
-        if instruction == "loss":
-            print("Sending loss data.")
-            outbox.put(data)
-            continue
-        if instruction == "pause":
-            continue
-        if instruction == "stop":
-            break
-        if instruction == "set_batch_permutation":
-            print("Receiving permutation.")
-            perm = inbox.get()
-            print("Setting new permutation.")
-            dataset.set_permutation(perm)
-            continue
+class IgnoreKeyboardInterrupt:
+    def __enter__(self):
+        self.signal_received = False
+        self.old_handler = signal.signal(signal.SIGINT, self.handler)
 
+    def handler(self, sig, frame):
+        self.signal_received = (sig, frame)
+        print('SIGINT received. Ignoring KeyboardInterrupt.')
+
+    def __exit__(self, type, value, traceback):
+        signal.signal(signal.SIGINT, self.old_handler)
+        #if self.signal_received:
+        #    self.old_handler(*self.signal_received)
+
+def trainer_worker(inbox, outbox, loss_outbox):
+    with IgnoreKeyboardInterrupt():
+        outbox.put("ready")
+        model = inbox.get()
+        dataset = inbox.get()
+        UserOptimizer = inbox.get()
+        batch_size = inbox.get()
+        shuffle = inbox.get()
+        optimizer = UserOptimizer(model.parameters())
+        reporter = Reporter()
+        parent = torch.multiprocessing.parent_process()
+        compute_time = 0.0
+        while True:
+            print(f"Waiting for instruction. {reporter.n} steps so far.")
+            instruction = inbox.get()
+            print(f"Received instruction '{instruction}'.")
+            if instruction == "start":
+                with Stopwatch() as stopwatch:
+                    situation = "normal"
+                    while situation == "normal":
+                        print("Beginning epoch.")
+                        for X in DataLoader(dataset, batch_size=batch_size, shuffle=shuffle):
+                            optimizer.zero_grad()
+                            loss = model(X)
+                            loss.backward()
+                            optimizer.step()
+                            reporter.step(loss.item())
+                            loss_outbox.put((reporter.n, compute_time + stopwatch.time_elapsed, loss.item()))
+                            try:
+                                instruction = inbox.get(False)
+                                if instruction != "start":
+                                    print(f"Interrupted by instruction '{instruction}'.")
+                                    situation = "break"
+                                    break
+                            except:
+                                pass
+                            if not parent.is_alive():
+                                print("Orphaned, exiting.")
+                                instruction = "stop"
+                                situation = "break"
+                                break
+                compute_time += stopwatch.total_run_time
+                print("Exiting compute loop.")
+            if instruction == "pause":
+                continue
+            if instruction == "stop":
+                break
+            if instruction == "set_batch_size":
+                print("Setting new batch size.")
+                batch_size = inbox.get()
+                continue
+            if instruction == "set_batch_permutation":
+                print("Receiving permutation.")
+                perm = inbox.get()
+                print("Setting new permutation.")
+                dataset.set_permutation(perm)
+                continue
+    print("Exiting process.")
 class Trainer:
     def __init__(self,
                  model,
                  dataset,
-                 optimizer_class=None):
+                 optimizer_class=None,
+                 batch_size=None,
+                 shuffle=True):
         if optimizer_class is None:
            optimizer_class = torch.optim.AdamW
+        if batch_size is None:
+            batch_size = 1
         self.model = model
         self.dataset = dataset
         self.optimizer_class = optimizer_class
+        self.batch_size = batch_size
+        self.shuffle = shuffle
         self.inbox = Queue()
         self.outbox = Queue()
         self.running = False
         self.paused = None
+        self.loss_inbox = Queue()
+        self.loss_stream_pos = 0
+        self.data = []
+
+    def set_batch_size(self, batch_size):
+        self.batch_size = batch_size
+        if self.running == True:
+            self.outbox.put("set_batch_size")
+            self.outbox.put(self.batch_size)
+            if self.paused == False:
+                self.outbox.put("start")
 
     def set_batch_permutation(self, perm):
         self.dataset.set_permutation(perm)
@@ -271,24 +316,29 @@ class Trainer:
 
     def start(self):
         if self.running == False:
-            self.process = Process(target=trainer_worker, args=(self.outbox, self.inbox))
+            self.process = Process(target=trainer_worker, args=(self.outbox, self.inbox, self.loss_inbox))
             self.process.start()
             ready = self.inbox.get() # Wait for ready.
             self.outbox.put(self.model)
             self.outbox.put(self.dataset)
             self.outbox.put(self.optimizer_class)
+            self.outbox.put(self.batch_size)
+            self.outbox.put(self.shuffle)
             self.running = True
         self.outbox.put("start")
         self.running = True
         self.paused = False
 
     def loss(self):
+        start = len(self.data)
         if self.running == True:
-            self.outbox.put("loss")
-            data = self.inbox.get()
-            if not self.paused:
-                self.outbox.put("start")
-            return data
+            while True:
+                try:
+                    item = self.loss_inbox.get(False)
+                except:
+                    break
+                self.data.append(item)
+            return self.data[start:]
         else:
             return []
 
@@ -315,7 +365,6 @@ class Trainer:
         if path is None:
             path = self.model.name() + "_" + str(self.n) +".pt"
         torch.save(self.model, path)
-
 
     def autocomplete(self, prompt="", N=1024):
         was_paused = self.running and self.paused
