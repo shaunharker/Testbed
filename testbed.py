@@ -31,7 +31,7 @@ class TextIterableDataset(IterableDataset):
                  filename='minicorpus.txt',
                  B=1,
                  N=64,
-                 shuffle=False,
+                 shuffle=True,
                  device=None):
         super(TextIterableDataset).__init__()
         with open('minicorpus.txt', 'r') as infile:
@@ -65,8 +65,6 @@ class TextIterableDataset(IterableDataset):
         device = self.device
         if self.shuffle:
             self.pos = randrange(D - B*N)
-        batch_start = self.pos
-        batch_end = batch_start + B * N
         if self.pos + B*N > D:
             self.offset = self.offset + 1
             if self.offset >= B*N:
@@ -188,15 +186,17 @@ def trainer_worker(inbox, outbox):
     outbox.put("ready")
     model = inbox.get()
     dataset = inbox.get()
-    optimizer = inbox.get()
+    UserOptimizer = inbox.get()
+    optimizer = UserOptimizer(model.parameters())
     reporter = Reporter()
     data = []
     while True:
-        print("Waiting for instruction.")
+        print(f"Waiting for instruction. {reporter.n} steps so far.")
         instruction = inbox.get()
         print(f"Received instruction '{instruction}'.")
         if instruction == "start":
             for X in DataLoader(dataset):
+                X = X.reshape(X.shape[1:])
                 try:
                     instruction = inbox.get(False)
                     if instruction != "start":
@@ -219,24 +219,18 @@ def trainer_worker(inbox, outbox):
             continue
         if instruction == "stop":
             break
-        if instruction == "debug":
-            print("Debug information:")
-            print('  n', reporter.n)
-            print('  optim', optimizer.state_dict())
-            continue
+
 
 class Trainer:
     def __init__(self,
                  model,
                  dataset,
-                 optimizer=None):
-        if optimizer is None:
-            optimizer = torch.optim.AdamW(model.parameters())
-            optimizer.step() # so state_dict is initialized (multiprocessing issue)
-            print(optimizer.state_dict())
+                 optimizer_class=None):
+        if optimizer_class is None:
+           optimizer_class = torch.optim.AdamW
         self.model = model
         self.dataset = dataset
-        self.optimizer = optimizer
+        self.optimizer_class = optimizer_class
         self.inbox = Queue()
         self.outbox = Queue()
         self.running = False
@@ -252,7 +246,7 @@ class Trainer:
             ready = self.inbox.get() # Wait for ready.
             self.outbox.put(self.model)
             self.outbox.put(self.dataset)
-            self.outbox.put(self.optimizer)
+            self.outbox.put(self.optimizer_class)
             self.running = True
         self.outbox.put("start")
         self.running = True
@@ -271,12 +265,6 @@ class Trainer:
     def pause(self):
         if self.running == True:
             self.outbox.put("pause")
-            self.paused = True
-
-    def debug(self):
-        if self.running == True:
-            print(self.optimizer.state_dict())
-            self.outbox.put("debug")
             self.paused = True
 
     def stop(self):
