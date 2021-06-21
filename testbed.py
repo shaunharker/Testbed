@@ -60,25 +60,42 @@ class TextDataset:
     def __init__(self,
                  filename='minicorpus.txt',
                  N=64,
+                 B=64,
+                 batch_first=True,
                  device=None):
         if device is None:
             device = default_device()
         self.device = device
         self.N = N
-        self.D = len(self.tokens) // N
-        self.perm = list(range(self.D))
+        self.B = B
+        self.batch_first = batch_first
         with open('minicorpus.txt', 'r') as infile:
             self.text = infile.read()
         try:
             self.tokens = torch.load('minicorpus.pt').to(device)
         except:
-            self.tokens = torch.tensor(list(bytes(self.text, 'utf-8'))).byte().contiguous().to(device)
+            self.tokens = torch.tensor(list(bytes(self.text, 'utf-8'))).byte()
             torch.save(self.tokens, 'minicorpus.pt')
+        D = len(self.tokens) // (N*B)
+        self.D = D
+        self.perm = list(range(self.D))
+        self.ready = False
+
+    def set_batch_size(self, B):
+        N = self.N
+        D = self.D
+        device = self.device
+        if self.batch_first:
+            self.batches = self.tokens[:D*B*N].view(B,D,N).transpose(0,1).contiguous().to(device)
+        else:
+            self.batches = self.tokens[:D*B*N].view(B,D,N).transpose(0,1).transpose(1,2).contiguous().to(device)
 
     def __getitem__(self, idx):
-        N = self.N
+        if not self.ready:
+            self.set_batch_size(self.B)
+            self.ready = True
         idx = self.perm[idx]
-        return self.tokens[N*idx:N*(idx+1)]
+        return self.batches[idx]
 
     def __len__(self):
         return self.D
@@ -106,26 +123,30 @@ class Net0(nn.Module):
         self.fc2 = nn.Linear(H, C)
         self.criterion = nn.CrossEntropyLoss()
         self.softmax = torch.nn.Softmax(dim=-1)
+        self.batch_first = True
 
     def name(self):
         return f"net0_H{self.H}_L{self.L}_K{self.K}_C{self.C}"
 
     def forward(self, X):
+        """
+        Requires N = L + 1, where X.shape == [N, B]
+        """
         L = self.L
         K = self.K
-        x = self.embedding(X[...,-L-1:-1])
-        y = X[...,-1].view(-1)
-        x = x.view(-1,L*K)
-        x = self.fc2(torch.sigmoid(self.fc1(x)))
+        x = self.embedding(X[:,-L-1:-1,:]) # x.shape == [B, L, K]
+        y = X[:,-1].view(-1) # y.shape == [B]
+        x = x.view(-1,L*K)  # s.shape == [B, L*K]
+        x = self.fc2(torch.sigmoid(self.fc1(x))) # x.shape == [B, C]
         loss = self.criterion(x,y)
         return loss
 
-    def probs(self, x):
+    def probs(self, X):
         L = self.L
         K = self.K
-        x = self.embedding(x[...,-L:])
-        x = x.view(-1,L*K)
-        x = self.fc2(torch.sigmoid(self.fc1(x)))
+        x = self.embedding(X[:,-L-1:-1,:]) # x.shape == [B, L, K]
+        x = x.view(-1,L*K)  # s.shape == [B, L*K]
+        x = self.fc2(torch.sigmoid(self.fc1(x))) # x.shape == [B, C]
         P = self.softmax(x)
         return P
 
@@ -141,6 +162,7 @@ class Net1(nn.Module):
         self.layer1 = nn.Linear(H, C)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.batch_first = True
 
     def name(self):
         return f"net1_H{self.H}_L{self.L}_K{self.K}_C{self.C}"
@@ -148,29 +170,31 @@ class Net1(nn.Module):
     def forward(self, X):
         """
         Input:
-        X is a Tensor with shape [B, N+1] holding integers in {0...K-1}
-        We understand this as rows of text, where each continguous chunk
-        of L letters is used to guess the next one.
+        X is a Tensor with shape [N, B] holding integers in {0...K-1}
+        We understand this as columns of contiguous text where {0...K-1} is
+        the alphabet. N > L required.
+
+        N is batch example length.
+        B is number of examples in a batch (i.e. batch size)
+        K is embedding dimension
+        C is number of classifications ()
         """
-        x = self.embedding(X[...,:-1]) # x.shape == [B, N, K]
-        y = X[...,self.L:] # x.shape == [B, N-L+1]
-
-        x = torch.transpose(x, -1, -2)
-        x = self.layer0(x) # x.shape == [B, H, N-L+1]
-        x = torch.transpose(x, -1, -2) # x.shape == [B, N-L+1, H]
-        x = torch.sigmoid(x) # x.shape == [B, N-L+1, H]
-        x = self.layer1(x) # x.shape == [B, N-L+1, C]
-
-        x = x.view(-1, self.C) # x.shape = [B*(N-L+1), C]
-        y = y.view(-1)
-
+        x = self.embedding(X[:,:-1]) # x.shape == [B, N-1, K]
+        y = X[:,self.L:] # y.shape == [B, N-L]
+        x = x.transpose(1,2) # x.shape == [B, K, N-1]
+        x = self.layer0(x) # x.shape == [B, H, N-L]
+        x = x.transpose(1,2) # x.shape == [B, N-L, H]
+        x = torch.sigmoid(x) # x.shape == [B, N-L, H]
+        x = self.layer1(x) # x.shape == [B, N-L, C]
+        x = x.view(-1, self.C) # x.shape = [B*(N-L), C]
+        y = y.view(-1) # y.shape == [B*(N-L)]
         return self.criterion(x, y)
 
     def probs(self, X): # X.shape == [B, N]
         x = self.embedding(X) # x.shape == [B, N, K]
-        x = torch.transpose(x, -1, -2) # x.shape == [B, K, N]
+        x = x.transpose(1,2) # x.shape == [B, K, N]
         x = self.layer0(x) # x.shape == [B, H, N-L+1]
-        x = torch.transpose(x, -1, -2) # x.shape == [B, N-L+1, H]
+        x = x.transpose(1,2) # x.shape == [B, N-L+1, H]
         x = torch.sigmoid(x) # x.shape == [B, N-L+1, H]
         x = self.layer1(x) # x.shape == [B, N-L+1, C]
         P = self.softmax(x) # P.shape == [B, N-L+1, C]
@@ -227,6 +251,7 @@ def trainer_worker(inbox, outbox, loss_outbox):
         parent = torch.multiprocessing.parent_process()
         compute_time = 0.0
         waiting = False
+        dataset.set_batch_size(batch_size)
         model.train()
         while True:
             if not waiting:
@@ -248,7 +273,7 @@ def trainer_worker(inbox, outbox, loss_outbox):
                     situation = "normal"
                     while situation == "normal":
                         print(f"Beginning epoch. batch_size={batch_size}, shuffle={shuffle}")
-                        for X in DataLoader(dataset, batch_size=batch_size, shuffle=shuffle):
+                        for X in DataLoader(dataset, batch_size=None, shuffle=shuffle):
                             optimizer.zero_grad()
                             loss = model(X)
                             loss.backward()
@@ -272,6 +297,7 @@ def trainer_worker(inbox, outbox, loss_outbox):
             if instruction == "set_batch_size":
                 print("Setting new batch size.")
                 batch_size = inbox.get()
+                dataset.set_batch_size(batch_size)
                 continue
             if instruction == "set_batch_permutation":
                 print("Receiving permutation.")
