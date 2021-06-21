@@ -66,6 +66,7 @@ class TextDataset:
         self.B = B
         self.N = N
         self.D = len(self.tokens) // (B*N)
+        self.perm = list(range(self.D))
         self.batches = [None]*self.D
         if device is None:
             device = default_device()
@@ -73,12 +74,16 @@ class TextDataset:
 
     def __getitem__(self, idx):
         k = self.B*self.N
+        idx = self.perm[idx]
         if self.batches[idx] is None:
             self.batches[idx] = torch.tensor(self.tokens[k*idx:k*(idx+1)]).reshape(self.B, self.N)
         return self.batches[idx].to(self.device)
 
     def __len__(self):
         return self.D
+
+    def set_permutation(self, perm):
+        self.perm = perm
 
     def random_text_snippet(self, N):
         idx = randrange(len(self.text) - N)
@@ -87,58 +92,6 @@ class TextDataset:
     def inspect(self, idx):
         batch = self[idx].tolist()
         return [decode_broken_utf8(example) for example in batch]
-
-class TextIterableDataset(IterableDataset):
-    def __init__(self,
-                 filename='minicorpus.txt',
-                 B=1,
-                 N=64,
-                 shuffle=True,
-                 device=None):
-        super(TextIterableDataset).__init__()
-        with open('minicorpus.txt', 'r') as infile:
-            self.text = infile.read()
-        self.B = B
-        self.N = N
-        self.shuffle = shuffle
-        if device is None:
-            device = default_device()
-        self.device = device
-        self.tokens = torch.tensor([ ord(c) for c in self.text if ord(c) < 256])  # 10 seconds
-        self.pos = 0
-        self.epoch = 0
-        self.D = len(self.tokens)
-        self.offset = 0
-
-    def __iter__(self):
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is not None:  # in a worker process
-            raise BaseException("Multiple workers not supported by TextIterableDataset yet")
-        return self
-
-    def random_text_snippet(self, N):
-        idx = randrange(self.D - N)
-        return text[idx:idx+N]
-
-    def __next__(self):
-        B = self.B
-        N = self.N
-        D = self.D
-        device = self.device
-        if self.shuffle:
-            self.pos = randrange(D - B*N)
-        if self.pos + B*N > D:
-            self.offset = self.offset + 1
-            if self.offset >= B*N:
-                self.offset = 0
-                self.epoch = self.epoch + 1
-                print(f"Epoch {self.epoch}")
-            self.pos = self.offset
-        batch_start = self.pos
-        batch_end = batch_start + B*N
-        self.pos = batch_end
-        X = self.tokens[batch_start:batch_end].reshape((B, N)).to(device)
-        return X
 
 class Net0(nn.Module):
     def __init__(self, H=256, L=64, K=8, C=256):
@@ -283,7 +236,12 @@ def trainer_worker(inbox, outbox):
             continue
         if instruction == "stop":
             break
-
+        if instruction == "set_batch_permutation":
+            print("Receiving permutation.")
+            perm = inbox.get()
+            print("Setting new permutation.")
+            dataset.set_permutation(perm)
+            continue
 
 class Trainer:
     def __init__(self,
@@ -299,6 +257,14 @@ class Trainer:
         self.outbox = Queue()
         self.running = False
         self.paused = None
+
+    def set_batch_permutation(self, perm):
+        self.dataset.set_permutation(perm)
+        if self.running == True:
+            self.outbox.put("set_batch_permutation")
+            self.outbox.put(perm)
+            if self.paused == False:
+                self.outbox.put("start")
 
     def status(self):
         return f"Running: {self.running}\nPaused: {self.paused}"
@@ -350,10 +316,11 @@ class Trainer:
             path = self.model.name() + "_" + str(self.n) +".pt"
         torch.save(self.model, path)
 
+
     def autocomplete(self, prompt="", N=1024):
         was_paused = self.running and self.paused
         self.pause()
-        L = model.L
+        L = self.model.L
         prompt = [b for b in bytes(self.dataset.random_text_snippet(L) + prompt, 'utf-8')][-L:]
         completion = []
         tail = prompt
@@ -361,7 +328,7 @@ class Trainer:
             x = (torch.tensor(tail)
                      .reshape((1,L))
                      .to(default_device()))
-            P = model.probs(x)
+            P = self.model.probs(x)
             prob_dist = torch.distributions.Categorical(P)
             c_ord = prob_dist.sample()[0]
             tail = tail[1:] + [c_ord]
