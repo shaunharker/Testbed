@@ -82,12 +82,11 @@ class Transformer(nn.Module):
         nn.init.uniform_(self.decoder.weight, -initrange, initrange)
 
     def forward(self, X, has_mask=True):
-        x = X[...,:-1] # shape [B, N]
-        y = X[...,1:]  # shape [B, N]
-        x = torch.transpose(x, -1, -2) # shape [N, B]
-        y = torch.transpose(y, -1, -2) # shape [N, B]
-        x = self.encoder(x) * math.sqrt(self.hyp['ninp']) # shape [N, B, E]
-        x = self.pos_encoder(x) # shape [N, B, E]
+        X = X.t().contiguous() # shape [N, B]
+        x = X[:-1] # shape [N-1, B]
+        y = X[1:]  # shape [N-1, B]
+        x = self.encoder(x) * math.sqrt(self.hyp['ninp']) # shape [N-1, B, E]
+        x = self.pos_encoder(x) # shape [N-1, B, E]
         if has_mask:
             device = X.device
             if self.src_mask is None or self.src_mask.size(0) != len(x):
@@ -95,9 +94,9 @@ class Transformer(nn.Module):
                 self.src_mask = mask
         else:
             self.src_mask = None
-        x = self.transformer_encoder(x, self.src_mask) # shape [N, B, E]
-        x = self.decoder(x).view(-1,self.hyp['ntoken']) # shape [N*B, K]
-        y = y.view(-1) # shape [N*B]
+        x = self.transformer_encoder(x, self.src_mask) # shape [N-1, B, E]
+        x = self.decoder(x).view(-1,self.hyp['ntoken']) # shape [(N-1)*B, K]
+        y = y.view(-1) # shape [(N-1)*B]
         return self.criterion(x,y)# self.softmax(output, dim=-1)
 
     def probs(self, X, has_mask=True):
@@ -115,5 +114,5 @@ class Transformer(nn.Module):
         else:
             self.src_mask = None
         x = self.transformer_encoder(x, self.src_mask) # shape [N, B, E]
-        x = self.decoder(x)[-1,:,:].squeeze(0) # shape [B, K]
+        x = self.decoder(x)[-1] # shape [B, K]
         return self.softmax(x) # shape [B]

@@ -82,8 +82,10 @@ class TextDataset:
         self.ready = False
 
     def set_batch_size(self, B):
+        self.B = B
         N = self.N
-        D = self.D
+        D = len(self.tokens) // (N*B)
+        self.D = D
         device = self.device
         if self.batch_first:
             self.batches = self.tokens[:D*B*N].view(B,D,N).transpose(0,1).contiguous().to(device)
@@ -95,7 +97,7 @@ class TextDataset:
             self.set_batch_size(self.B)
             self.ready = True
         idx = self.perm[idx]
-        return self.batches[idx]
+        return self.batches[idx].long()
 
     def __len__(self):
         return self.D
@@ -187,7 +189,7 @@ class Net1(nn.Module):
         x = torch.sigmoid(x) # x.shape == [B, N-L, H]
         x = self.layer1(x) # x.shape == [B, N-L, C]
         x = x.view(-1, self.C) # x.shape = [B*(N-L), C]
-        y = y.view(-1) # y.shape == [B*(N-L)]
+        y = y.reshape(-1) # y.shape == [B*(N-L)]
         return self.criterion(x, y)
 
     def probs(self, X): # X.shape == [B, N]
@@ -197,7 +199,7 @@ class Net1(nn.Module):
         x = x.transpose(1,2) # x.shape == [B, N-L+1, H]
         x = torch.sigmoid(x) # x.shape == [B, N-L+1, H]
         x = self.layer1(x) # x.shape == [B, N-L+1, C]
-        P = self.softmax(x) # P.shape == [B, N-L+1, C]
+        P = self.softmax(x)[:,-1] # P.shape == [1, C]
         return P
 
 def numel(model):
@@ -291,6 +293,7 @@ def trainer_worker(inbox, outbox, loss_outbox):
                 compute_time += stopwatch.total_run_time
                 print("Exiting compute loop.")
             if instruction == "pause":
+                outbox.put("paused")
                 continue
             if instruction == "stop":
                 break
@@ -379,9 +382,13 @@ class Trainer:
             return []
 
     def pause(self):
+        """
+        Note: blocks until the remote is paused
+        """
         if self.running == True:
             self.outbox.put("pause")
             self.paused = True
+            self.inbox.get()
 
     def stop(self):
         if self.running == True:
@@ -402,11 +409,11 @@ class Trainer:
             path = self.model.name() + "_" + str(self.n) +".pt"
         torch.save(self.model, path)
 
-    def autocomplete(self, prompt="", N=1024, L=None):
+    def autocomplete(self, prompt="", N=1024):
+        self.model.eval()
         was_paused = self.running and self.paused
         self.pause()
-        if L is None:
-            L = N
+        L = self.dataset.N - 1
         prompt = [b for b in bytes(self.dataset.random_text_snippet(L) + prompt, 'utf-8')][-L:]
         completion = []
         tail = prompt
@@ -414,14 +421,12 @@ class Trainer:
             x = (torch.tensor(tail)
                       .unsqueeze(0)
                       .to(default_device())) # shape [1,L]
-            P = self.model.probs(x).squeeze(0)
+            P = self.model.probs(x).view(-1)
             prob_dist = torch.distributions.Categorical(P)
             c_ord = prob_dist.sample().item()
             tail = tail[1:] + [c_ord]
             completion += [c_ord]
         print(decode_broken_utf8(bytes(prompt)+bytes("\n~AUTOCOMPLETE~\n",'utf-8') + bytes(completion)))
-
         if not was_paused:
             self.start()
-
         return decode_broken_utf8(bytes(completion))
