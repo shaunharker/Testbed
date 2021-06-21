@@ -19,12 +19,74 @@ Queue = ctx.Queue
 from random import randint, randrange
 from statistics import median
 
+def decode_broken_utf8(s):
+    def charsize(b):
+        if b&128 == 0:
+            return 1
+        elif b&(128+64+32) == (128+64):
+            return 2
+        elif b&(128+64+32+16) == (128+64+32):
+            return 3
+        elif b&(128+64+32+16+8) == (128+64+32+16):
+            return 4
+        return 0
+
+    def is_payload(b):
+        return b&(128+64) == 128
+
+    repaired = []
+    i=0
+    while i < len(s):
+        j = charsize(s[i])
+        if j == 0 or i+j > len(s) or not all(is_payload(b) for b in s[i+1:i+j]):
+            repaired += [239, 191, 189] #�
+            i = i + 1
+            continue
+        else:
+            repaired += [b for b in s[i:i+j]]
+            i = i + j
+
+    return bytes(repaired).decode('utf-8')
 
 def default_device():
     if torch.cuda.is_available():
         return "cuda:0"
     else:
         return "cpu"
+
+class TextDataset:
+    def __init__(self,
+                 filename='minicorpus.txt',
+                 B=1,
+                 N=64,
+                 device=None):
+        with open('minicorpus.txt', 'r') as infile:
+            self.text = infile.read()
+        self.tokens = list(bytes(self.text, 'utf-8'))
+        self.B = B
+        self.N = N
+        self.D = len(self.tokens) // (B*N)
+        self.batches = [None]*self.D
+        if device is None:
+            device = default_device()
+        self.device = device
+
+    def __getitem__(self, idx):
+        k = self.B*self.N
+        if self.batches[idx] is None:
+            self.batches[idx] = torch.tensor(self.tokens[k*idx:k*(idx+1)]).reshape(self.B, self.N)
+        return self.batches[idx].to(self.device)
+
+    def __len__(self):
+        return self.D
+
+    def random_text_snippet(self, N):
+        idx = randrange(len(self.text) - N)
+        return self.text[idx:idx+N]
+
+    def inspect(self, idx):
+        batch = self[idx].tolist()
+        return [decode_broken_utf8(example) for example in batch]
 
 class TextIterableDataset(IterableDataset):
     def __init__(self,
@@ -44,7 +106,7 @@ class TextIterableDataset(IterableDataset):
         self.device = device
         self.tokens = torch.tensor([ ord(c) for c in self.text if ord(c) < 256])  # 10 seconds
         self.pos = 0
-
+        self.epoch = 0
         self.D = len(self.tokens)
         self.offset = 0
 
@@ -69,6 +131,8 @@ class TextIterableDataset(IterableDataset):
             self.offset = self.offset + 1
             if self.offset >= B*N:
                 self.offset = 0
+                self.epoch = self.epoch + 1
+                print(f"Epoch {self.epoch}")
             self.pos = self.offset
         batch_start = self.pos
         batch_end = batch_start + B*N
@@ -290,21 +354,21 @@ class Trainer:
         was_paused = self.running and self.paused
         self.pause()
         L = model.L
-        prompt = (self.dataset.random_text_snippet(2*L) + prompt)
-        completion = ""
+        prompt = [b for b in bytes(self.dataset.random_text_snippet(L) + prompt, 'utf-8')][-L:]
+        completion = []
         tail = prompt
         for _ in range(N):
-            x = (torch.tensor(([0]*L + [ord(c) for c in tail if ord(c) < 256])[-L:])
+            x = (torch.tensor(tail)
                      .reshape((1,L))
                      .to(default_device()))
             P = model.probs(x)
             prob_dist = torch.distributions.Categorical(P)
             c_ord = prob_dist.sample()[0]
-            c = chr(c_ord)
-            tail = tail[1:] + c
-            completion += c
-        print(prompt+"\n~AUTOCOMPLETE~\n"+completion)
+            tail = tail[1:] + [c_ord]
+            completion += [c_ord]
+        print(decode_broken_utf8(bytes(prompt)+bytes("\n~AUTOCOMPLETE~\n",'utf-8') + bytes(completion)))
+
         if not was_paused:
             self.start()
 
-        return completion
+        return decode_broken_utf8(bytes(completion))
