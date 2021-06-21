@@ -19,6 +19,7 @@ Queue = ctx.Queue
 
 from random import randint, randrange
 from statistics import median
+from transformer import Transformer
 
 def decode_broken_utf8(s):
     def charsize(b):
