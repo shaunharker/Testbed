@@ -61,24 +61,24 @@ class TextDataset:
                  filename='minicorpus.txt',
                  N=64,
                  device=None):
-        with open('minicorpus.txt', 'r') as infile:
-            self.text = infile.read()
-        try:
-            self.tokens = torch.load('minicorpus.pt')
-        except:
-            self.tokens = torch.tensor(list(bytes(self.text, 'utf-8')))
-            torch.save(self.tokens, 'minicorpus.pt')
-        self.N = N
-        self.D = len(self.tokens) // N
-        self.perm = list(range(self.D))
         if device is None:
             device = default_device()
         self.device = device
+        self.N = N
+        self.D = len(self.tokens) // N
+        self.perm = list(range(self.D))
+        with open('minicorpus.txt', 'r') as infile:
+            self.text = infile.read()
+        try:
+            self.tokens = torch.load('minicorpus.pt').to(device)
+        except:
+            self.tokens = torch.tensor(list(bytes(self.text, 'utf-8'))).byte().contiguous().to(device)
+            torch.save(self.tokens, 'minicorpus.pt')
 
     def __getitem__(self, idx):
         N = self.N
         idx = self.perm[idx]
-        return self.tokens[N*idx:N*(idx+1)].to(self.device)
+        return self.tokens[N*idx:N*(idx+1)]
 
     def __len__(self):
         return self.D
