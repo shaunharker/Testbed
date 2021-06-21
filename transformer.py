@@ -49,15 +49,22 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 class Transformer(nn.Module):
-    def __init__(self, ntoken=256, ninp=512, nhead=8, nhid=2048, nlayers=6, dropout=0.5):
+    def __init__(self, ntoken=256, ninp=512, nhead=8, nhid=256, nlayers=2, dropout=0.5):
         super(Transformer, self).__init__()
+        self.L = 64
+        self.hyp = {
+            "ntoken": ntoken,
+            "ninp": ninp,
+            "nhead": nhead,
+            "nhid": nhid,
+            "nlayers": nlayers,
+            "dropout": dropout}
         self.model_type = 'Transformer'
         self.src_mask = None
         self.pos_encoder = PositionalEncoding(ninp, dropout)
         encoder_layers = TransformerEncoderLayer(ninp, nhead, nhid, dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
         self.encoder = nn.Embedding(ntoken, ninp)
-        self.ninp = ninp
         self.decoder = nn.Linear(ninp, ntoken)
         self.criterion = nn.CrossEntropyLoss()
         self.softmax = torch.nn.Softmax(dim=-1)
@@ -75,23 +82,38 @@ class Transformer(nn.Module):
         nn.init.uniform_(self.decoder.weight, -initrange, initrange)
 
     def forward(self, X, has_mask=True):
-        print('transformer forward', X.shape)
-        x = X[...,-L-1:-1]
-        y = X[...,-1]
-        src = self.encoder(x) * math.sqrt(self.ninp)
-        print(1, src.shape)
-        src = self.pos_encoder(src)
-        print(2, src.shape)
+        x = X[...,:-1] # shape [B, N]
+        y = X[...,1:]  # shape [B, N]
+        x = torch.transpose(x, -1, -2) # shape [N, B]
+        y = torch.transpose(y, -1, -2) # shape [N, B]
+        x = self.encoder(x) * math.sqrt(self.hyp['ninp']) # shape [N, B, E]
+        x = self.pos_encoder(x) # shape [N, B, E]
         if has_mask:
-            device = src.device
-            if self.src_mask is None or self.src_mask.size(0) != len(src):
-                mask = self._generate_square_subsequent_mask(len(src)).to(device)
+            device = X.device
+            if self.src_mask is None or self.src_mask.size(0) != len(x):
+                mask = self._generate_square_subsequent_mask(len(x)).to(device)
                 self.src_mask = mask
         else:
             self.src_mask = None
-        output = self.transformer_encoder(src, self.src_mask)
-        print(output.shape)
-        output = self.decoder(output)
-        print(output.shape, y.shape)
-        time.sleep(1)
-        return self.criterion(output,y)# self.softmax(output, dim=-1)
+        x = self.transformer_encoder(x, self.src_mask) # shape [N, B, E]
+        x = self.decoder(x).view(-1,self.hyp['ntoken']) # shape [N*B, K]
+        y = y.view(-1) # shape [N*B]
+        return self.criterion(x,y)# self.softmax(output, dim=-1)
+
+    def probs(self, X, has_mask=True):
+        if X.dim == 1:
+            X = torch.unsqueeze(X, 0)
+        x = X # shape [B, N]
+        x = torch.transpose(x, 0, 1) # shape [N, B]
+        x = self.encoder(x) * math.sqrt(self.hyp['ninp']) # shape [N, B, E]
+        x = self.pos_encoder(x) # shape [N, B, E]
+        if has_mask:
+            device = X.device
+            if self.src_mask is None or self.src_mask.size(0) != len(x):
+                mask = self._generate_square_subsequent_mask(len(x)).to(device)
+                self.src_mask = mask
+        else:
+            self.src_mask = None
+        x = self.transformer_encoder(x, self.src_mask) # shape [N, B, E]
+        x = self.decoder(x)[-1,:,:].squeeze(0) # shape [B, K]
+        return self.softmax(x) # shape [B]

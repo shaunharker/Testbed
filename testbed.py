@@ -114,8 +114,8 @@ class Net0(nn.Module):
         L = self.L
         K = self.K
         x = self.embedding(X[...,-L-1:-1])
-        y = X[...,-1].reshape((-1,))
-        x = x.reshape(-1,L*K)
+        y = X[...,-1].view(-1)
+        x = x.view(-1,L*K)
         x = self.fc2(torch.sigmoid(self.fc1(x)))
         loss = self.criterion(x,y)
         return loss
@@ -124,7 +124,7 @@ class Net0(nn.Module):
         L = self.L
         K = self.K
         x = self.embedding(x[...,-L:])
-        x = x.reshape(-1,L*K)
+        x = x.view(-1,L*K)
         x = self.fc2(torch.sigmoid(self.fc1(x)))
         P = self.softmax(x)
         return P
@@ -161,8 +161,8 @@ class Net1(nn.Module):
         x = torch.sigmoid(x) # x.shape == [B, N-L+1, H]
         x = self.layer1(x) # x.shape == [B, N-L+1, C]
 
-        x = x.reshape((-1, self.C)) # x.shape = [B*(N-L+1), C]
-        y = y.reshape((-1,))
+        x = x.view(-1, self.C) # x.shape = [B*(N-L+1), C]
+        y = y.view(-1)
 
         return self.criterion(x, y)
 
@@ -226,15 +226,28 @@ def trainer_worker(inbox, outbox, loss_outbox):
         reporter = Reporter()
         parent = torch.multiprocessing.parent_process()
         compute_time = 0.0
+        waiting = False
+        model.train()
         while True:
-            print(f"Waiting for instruction. {reporter.n} steps so far.")
-            instruction = inbox.get()
+            if not waiting:
+                print(f"Waiting for instruction. {reporter.n} steps so far.")
+                waiting = True
+            try:
+                instruction = inbox.get(True,1.0)
+                waiting = False
+            except:
+                if not parent.is_alive():
+                    print("Orphaned, exiting.")
+                    instruction = "stop"
+                    situation = "break"
+                    break
+                continue
             print(f"Received instruction '{instruction}'.")
             if instruction == "start":
                 with Stopwatch() as stopwatch:
                     situation = "normal"
                     while situation == "normal":
-                        print("Beginning epoch.")
+                        print(f"Beginning epoch. batch_size={batch_size}, shuffle={shuffle}")
                         for X in DataLoader(dataset, batch_size=batch_size, shuffle=shuffle):
                             optimizer.zero_grad()
                             loss = model(X)
@@ -250,11 +263,6 @@ def trainer_worker(inbox, outbox, loss_outbox):
                                     break
                             except:
                                 pass
-                            if not parent.is_alive():
-                                print("Orphaned, exiting.")
-                                instruction = "stop"
-                                situation = "break"
-                                break
                 compute_time += stopwatch.total_run_time
                 print("Exiting compute loop.")
             if instruction == "pause":
@@ -272,6 +280,7 @@ def trainer_worker(inbox, outbox, loss_outbox):
                 dataset.set_permutation(perm)
                 continue
     print("Exiting process.")
+
 class Trainer:
     def __init__(self,
                  model,
@@ -367,20 +376,21 @@ class Trainer:
             path = self.model.name() + "_" + str(self.n) +".pt"
         torch.save(self.model, path)
 
-    def autocomplete(self, prompt="", N=1024):
+    def autocomplete(self, prompt="", N=1024, L=None):
         was_paused = self.running and self.paused
         self.pause()
-        L = self.model.L
+        if L is None:
+            L = N
         prompt = [b for b in bytes(self.dataset.random_text_snippet(L) + prompt, 'utf-8')][-L:]
         completion = []
         tail = prompt
         for _ in range(N):
             x = (torch.tensor(tail)
-                     .reshape((1,L))
-                     .to(default_device()))
-            P = self.model.probs(x)
+                      .unsqueeze(0)
+                      .to(default_device())) # shape [1,L]
+            P = self.model.probs(x).squeeze(0)
             prob_dist = torch.distributions.Categorical(P)
-            c_ord = prob_dist.sample()[0]
+            c_ord = prob_dist.sample().item()
             tail = tail[1:] + [c_ord]
             completion += [c_ord]
         print(decode_broken_utf8(bytes(prompt)+bytes("\n~AUTOCOMPLETE~\n",'utf-8') + bytes(completion)))
