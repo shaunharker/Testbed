@@ -1,14 +1,14 @@
 # testbed/__init__.py
 # Shaun Harker
 # 2021-06-20
-import .data
-import .gui
-import .nn
-import .trainer
-import .util
+import testbed.data
+import testbed.gui
+import testbed.nn
+import testbed.trainer
+import testbed.util
 
-from .data import TextDataset
-from .nn import Net0
-from .nn import Net1
-from .nn import Transformer
-from .trainer import Trainer
+from testbed.data import TextDataset
+from testbed.nn import Net0
+from testbed.nn import Net1
+from testbed.nn import Transformer
+from testbed.trainer import Trainer

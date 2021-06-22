@@ -1,6 +1,5 @@
 import time
 
-
 class Stopwatch(object):
     """A stopwatch utility for timing execution that can be used as a regular
     object or as a context manager.

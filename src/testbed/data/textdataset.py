@@ -1,7 +1,7 @@
 import torch
 import math
 from random import randrange
-from . import default_device
+from testbed.util import default_device
 
 class TextDataset:
     def __init__(self,
