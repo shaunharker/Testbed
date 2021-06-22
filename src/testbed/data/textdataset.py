@@ -1,7 +1,7 @@
 import torch
 import math
-from random import randrange
-from testbed.util import default_device
+from random import randrange, randint
+from ..util import default_device, decode_broken_utf8
 
 class TextDataset:
     def __init__(self,
@@ -10,6 +10,7 @@ class TextDataset:
                  B=64,
                  shuffle=True,
                  device=None):
+        self.filename = filename
         if device is None:
             device = default_device()
         self.device = device
@@ -27,15 +28,11 @@ class TextDataset:
 
     def load_tokens(self):
         try:
-            self.tokens = torch.load(filename + '.pt').to(device)
+            self.tokens = torch.load(self.filename + '.pt').to(device)
         except:
             self.tokens = torch.tensor(list(bytes(self.text, 'utf-8'))).byte()
-            if cache_tokens:
-                try:
-                    torch.save(self.tokens, filename + '.pt')
-                except:
-                    print("TextDataset failed to cache tokens.")
-                    pass
+            print("Saving dataset in .pt format")
+            torch.save(self.tokens, self.filename + '.pt')
 
     def shuffle(self, N, recompute_batches=True):
         """
@@ -53,11 +50,11 @@ class TextDataset:
         if len(self.tokens) < .7 * len(self.text):
             self.load_tokens()
         K = len(self.tokens) // N
-        a = math.randint(int(math.sqrt(K)/2), int(2*math.sqrt(K)))
+        a = randint(int(math.sqrt(K)/2), int(2*math.sqrt(K)))
         b = K // a
         self.tokens = self.tokens[:a*b*N].view(a,b,N).transpose(0,1).contiguous().view(-1)[:a*b*N]
         if recompute_batches:
-            set_batch_size(self.B)
+            self.set_batch_size(self.B)
 
     def set_batch_size(self, B):
         self.B = B

@@ -3,7 +3,8 @@ import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
 Process = ctx.Process
 Queue = ctx.Queue
-from ..util import decode_broken_utf8
+from ..util import decode_broken_utf8, default_device
+from .worker import Worker
 
 class Trainer:
     def __init__(self,
@@ -50,7 +51,7 @@ class Trainer:
 
     def start(self):
         if self.running == False:
-            self.process = Process(target=trainer_worker, args=(self.outbox, self.inbox, self.loss_inbox))
+            self.process = Worker(self.outbox, self.inbox, self.loss_inbox)
             self.process.start()
             ready = self.inbox.get() # Wait for ready.
             self.outbox.put(self.model)
