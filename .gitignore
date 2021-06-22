@@ -1,5 +1,6 @@
 # Byte-compiled / optimized / DLL files
 minicorpus.txt
+trash
 local**
 *.log
 *.pt
