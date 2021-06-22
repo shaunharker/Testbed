@@ -1,3 +1,9 @@
+import torch
+import torch.multiprocessing
+ctx = torch.multiprocessing.get_context("spawn")
+Process = ctx.Process
+Queue = ctx.Queue
+from util import decode_broken_utf8
 
 class Trainer:
     def __init__(self,

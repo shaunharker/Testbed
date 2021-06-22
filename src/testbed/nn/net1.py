@@ -1,16 +1,18 @@
+import torch
+from torch.nn import Module, Embedding, Conv1d, Linear, Softmax, CrossEntropyLoss
 
-class Net1(nn.Module):
+class Net1(Module):
     def __init__(self, H, L, K=8, C=256):
         super(Net1, self).__init__()
         self.C = C # number of classes
         self.K = K # dimension of token embedding
         self.L = L # context window length
         self.H = H # number of hidden neurons
-        self.embedding = nn.Embedding(C, K)
-        self.layer0 = nn.Conv1d(K, H, L)
-        self.layer1 = nn.Linear(H, C)
-        self.softmax = torch.nn.Softmax(dim=-1)
-        self.criterion = torch.nn.CrossEntropyLoss()
+        self.embedding = Embedding(C, K)
+        self.layer0 = Conv1d(K, H, L)
+        self.layer1 = Linear(H, C)
+        self.softmax = Softmax(dim=-1)
+        self.criterion = CrossEntropyLoss()
         self.batch_first = True
 
     def name(self):

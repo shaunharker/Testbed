@@ -1,4 +1,4 @@
-import signal
+import torch
 
 def decode_broken_utf8(s):
     def charsize(b):

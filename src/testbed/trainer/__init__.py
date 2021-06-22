@@ -2,9 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
-Process = ctx.Process
-Queue = ctx.Queue
-from util import decode_broken_utf8, IgnoreKeyboardInterrupt, Reporter
+from ..util import IgnoreKeyboardInterrupt, Reporter
 
 def trainer_worker(inbox, outbox, loss_outbox):
     with IgnoreKeyboardInterrupt():
@@ -16,11 +14,10 @@ def trainer_worker(inbox, outbox, loss_outbox):
         shuffle = inbox.get()
         optimizer = UserOptimizer(model.parameters())
         reporter = Reporter()
-        parent = torch.multiprocessing.parent_process()
+        parent = ctx.parent_process()
         compute_time = 0.0
         waiting = False
         dataset.set_batch_size(batch_size)
-        model.train()
         while True:
             if not waiting:
                 print(f"Waiting for instruction. {reporter.n} steps so far.")
@@ -41,11 +38,18 @@ def trainer_worker(inbox, outbox, loss_outbox):
                     situation = "normal"
                     while situation == "normal":
                         print(f"Beginning epoch. batch_size={batch_size}, shuffle={shuffle}")
+                        model.train()
                         for X in DataLoader(dataset, batch_size=None, shuffle=shuffle):
+                            if not parent.is_alive():
+                                break
+                            ##################
+                            THE ACTUAL PROGRAM
+                            ##################
                             optimizer.zero_grad()
                             loss = model(X)
                             loss.backward()
                             optimizer.step()
+                            ##################
                             reporter.step(loss.item())
                             loss_outbox.put((reporter.n, compute_time + stopwatch.time_elapsed, loss.item()))
                             try:

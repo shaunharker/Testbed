@@ -1,3 +1,4 @@
+import signal
 
 class IgnoreKeyboardInterrupt:
     def __enter__(self):

@@ -1,11 +1,10 @@
 import math
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import time
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from torch.nn import TransformerEncoder, TransformerEncoderLayer, Dropout, Embedding, Linear, CrossEntropyLoss, Softmax
 
-class PositionalEncoding(nn.Module):
+class PositionalEncoding(torch.nn.Module):
     r"""Inject some information about the relative or absolute position of the tokens
         in the sequence. The positional encodings have the same dimension as
         the embeddings, so that the two can be summed. Here, we use sine and cosine
@@ -24,7 +23,7 @@ class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = Dropout(p=dropout)
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -48,7 +47,7 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
 
-class Transformer(nn.Module):
+class Transformer(torch.nn.Module):
     def __init__(self, ntoken=256, ninp=512, nhead=8, nhid=256, nlayers=2, dropout=0.5):
         super(Transformer, self).__init__()
         self.L = 64
@@ -64,10 +63,10 @@ class Transformer(nn.Module):
         self.pos_encoder = PositionalEncoding(ninp, dropout)
         encoder_layers = TransformerEncoderLayer(ninp, nhead, nhid, dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
-        self.encoder = nn.Embedding(ntoken, ninp)
-        self.decoder = nn.Linear(ninp, ntoken)
-        self.criterion = nn.CrossEntropyLoss()
-        self.softmax = torch.nn.Softmax(dim=-1)
+        self.encoder = Embedding(ntoken, ninp)
+        self.decoder = Linear(ninp, ntoken)
+        self.criterion = CrossEntropyLoss()
+        self.softmax = Softmax(dim=-1)
         self.init_weights()
 
     def _generate_square_subsequent_mask(self, sz):
@@ -77,9 +76,9 @@ class Transformer(nn.Module):
 
     def init_weights(self):
         initrange = 0.1
-        nn.init.uniform_(self.encoder.weight, -initrange, initrange)
-        nn.init.zeros_(self.decoder.weight)
-        nn.init.uniform_(self.decoder.weight, -initrange, initrange)
+        torch.nn.init.uniform_(self.encoder.weight, -initrange, initrange)
+        torch.nn.init.zeros_(self.decoder.weight)
+        torch.nn.init.uniform_(self.decoder.weight, -initrange, initrange)
 
     def forward(self, X, has_mask=True):
         X = X.t().contiguous() # shape [N, B]
