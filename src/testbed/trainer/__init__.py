@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
 from ..util import IgnoreKeyboardInterrupt, Reporter
+from .trainer import Trainer
 
 def trainer_worker(inbox, outbox, loss_outbox):
     with IgnoreKeyboardInterrupt():
@@ -42,14 +43,14 @@ def trainer_worker(inbox, outbox, loss_outbox):
                         for X in DataLoader(dataset, batch_size=None, shuffle=shuffle):
                             if not parent.is_alive():
                                 break
-                            ##################
-                            THE ACTUAL PROGRAM
-                            ##################
+                            ######################
+                            # THE ACTUAL PROGRAM #
+                            ######################
                             optimizer.zero_grad()
                             loss = model(X)
                             loss.backward()
                             optimizer.step()
-                            ##################
+                            ######################
                             reporter.step(loss.item())
                             loss_outbox.put((reporter.n, compute_time + stopwatch.time_elapsed, loss.item()))
                             try:

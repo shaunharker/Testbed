@@ -1,6 +1,6 @@
 import signal
 
-class GracefulInterruptHandler(object):
+class DelayKeyboardInterrupt(object):
     def __init__(self, sig=signal.SIGINT):
         self.sig = sig
 
