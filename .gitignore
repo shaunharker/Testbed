@@ -1,4 +1,8 @@
 # Byte-compiled / optimized / DLL files
+minicorpus.txt
+local**
+*.log
+*.pt
 __pycache__/
 *.py[cod]
 *$py.class
