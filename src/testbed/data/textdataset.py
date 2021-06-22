@@ -1,32 +1,63 @@
 import torch
+import math
 from random import randrange
 from . import default_device
 
 class TextDataset:
     def __init__(self,
-                 filename='minicorpus.txt',
+                 filename='/home/sharker/data/minicorpus.txt',
                  N=64,
                  B=64,
                  shuffle=True,
-                 batch_first=True,
                  device=None):
         if device is None:
             device = default_device()
         self.device = device
         self.N = N
         self.B = B
-        self.batch_first = batch_first
-        with open('minicorpus.txt', 'r') as infile:
+        with open(filename, 'r') as infile:
             self.text = infile.read()
-        try:
-            self.tokens = torch.load('minicorpus.pt').to(device)
-        except:
-            self.tokens = torch.tensor(list(bytes(self.text, 'utf-8'))).byte()
-            torch.save(self.tokens, 'minicorpus.pt')
-        D = len(self.tokens) // (N*B)
-        self.D = D
+        self.load_tokens()
+        if shuffle:
+            self.shuffle(N)
+        self.set_batch_size(B)
+
         self.perm = list(range(self.D))
         self.ready = False
+
+    def load_tokens(self):
+        try:
+            self.tokens = torch.load(filename + '.pt').to(device)
+        except:
+            self.tokens = torch.tensor(list(bytes(self.text, 'utf-8'))).byte()
+            if cache_tokens:
+                try:
+                    torch.save(self.tokens, filename + '.pt')
+                except:
+                    print("TextDataset failed to cache tokens.")
+                    pass
+
+    def shuffle(self, N, recompute_batches=True):
+        """
+        The goal is to mix up all the length N pieces without
+        messing up the length N pieces themselves.
+        It shrinks a bit, so we refresh to the original state once it
+        gets to 70% of original size.
+
+        Set recompute_batches to False in order to prevent set_batch_size
+        from being called (e.g. you want to change the batch_size B anyway
+        and will call it yourself)
+
+        Warning: mildly clever
+        """
+        if len(self.tokens) < .7 * len(self.text):
+            self.load_tokens()
+        K = len(self.tokens) // N
+        a = math.randint(int(math.sqrt(K)/2), int(2*math.sqrt(K)))
+        b = K // a
+        self.tokens = self.tokens[:a*b*N].view(a,b,N).transpose(0,1).contiguous().view(-1)[:a*b*N]
+        if recompute_batches:
+            set_batch_size(self.B)
 
     def set_batch_size(self, B):
         self.B = B
@@ -34,15 +65,9 @@ class TextDataset:
         D = len(self.tokens) // (N*B)
         self.D = D
         device = self.device
-        if self.batch_first:
-            self.batches = self.tokens[:D*B*N].view(B,D,N).transpose(0,1).contiguous().to(device)
-        else:
-            self.batches = self.tokens[:D*B*N].view(B,D,N).transpose(0,1).transpose(1,2).contiguous().to(device)
+        self.batches = self.tokens[:D*B*N].view(D,B,N).contiguous().to(device)
 
     def __getitem__(self, idx):
-        if not self.ready:
-            self.set_batch_size(self.B)
-            self.ready = True
         idx = self.perm[idx]
         return self.batches[idx].long()
 

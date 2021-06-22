@@ -13,7 +13,6 @@ class Net1(Module):
         self.layer1 = Linear(H, C)
         self.softmax = Softmax(dim=-1)
         self.criterion = CrossEntropyLoss()
-        self.batch_first = True
 
     def name(self):
         return f"net1_H{self.H}_L{self.L}_K{self.K}_C{self.C}"
