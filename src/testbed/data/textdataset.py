@@ -11,20 +11,18 @@ class TextDataset:
                  shuffle=True,
                  device=None):
         self.filename = filename
+        self.N = N
+        self.B = B
+        self.shuffle = shuffle
         if device is None:
             device = default_device()
         self.device = device
-        self.N = N
-        self.B = B
         with open(filename, 'r') as infile:
             self.text = infile.read()
         self.load_tokens()
         if shuffle:
-            self.shuffle(N)
+            self.perform_shuffle(N)
         self.set_batch_size(B)
-
-        self.perm = list(range(self.D))
-        self.ready = False
 
     def load_tokens(self):
         try:
@@ -34,7 +32,7 @@ class TextDataset:
             print("Saving dataset in .pt format")
             torch.save(self.tokens, self.filename + '.pt')
 
-    def shuffle(self, N, recompute_batches=True):
+    def perform_shuffle(self, N, recompute_batches=True):
         """
         The goal is to mix up all the length N pieces without
         messing up the length N pieces themselves.
@@ -56,6 +54,10 @@ class TextDataset:
         if recompute_batches:
             self.set_batch_size(self.B)
 
+    def set_example_length(self, N):
+        self.N = N
+        self.perform_shuffle(N)
+        
     def set_batch_size(self, B):
         self.B = B
         N = self.N
@@ -65,14 +67,10 @@ class TextDataset:
         self.batches = self.tokens[:D*B*N].view(D,B,N).contiguous().to(device)
 
     def __getitem__(self, idx):
-        idx = self.perm[idx]
         return self.batches[idx].long()
 
     def __len__(self):
         return self.D
-
-    def set_permutation(self, perm):
-        self.perm = perm
 
     def random_text_snippet(self, N):
         idx = randrange(len(self.text) - N)

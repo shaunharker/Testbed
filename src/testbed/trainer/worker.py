@@ -21,14 +21,11 @@ class Worker(ctx.Process):
             model = inbox.get()
             dataset = inbox.get()
             UserOptimizer = inbox.get()
-            batch_size = inbox.get()
-            shuffle = inbox.get()
             optimizer = UserOptimizer(model.parameters())
             reporter = Reporter()
             parent = torch.multiprocessing.parent_process()
             compute_time = 0.0
             waiting = False
-            dataset.set_batch_size(batch_size)
             while True:
                 if not waiting:
                     print(f"Waiting for instruction. {reporter.n} steps so far.")
@@ -48,9 +45,9 @@ class Worker(ctx.Process):
                     with Stopwatch() as stopwatch:
                         situation = "normal"
                         while situation == "normal":
-                            print(f"Beginning epoch. batch_size={batch_size}, shuffle={shuffle}")
+                            print(f"Beginning epoch. B={dataset.B} N={dataset.N}")
                             model.train()
-                            for X in DataLoader(dataset, batch_size=None, shuffle=shuffle):
+                            for X in DataLoader(dataset, batch_size=None, shuffle=False):
                                 if not parent.is_alive():
                                     situation = "break"
                                     break
@@ -85,10 +82,11 @@ class Worker(ctx.Process):
                     dataset.set_batch_size(batch_size)
                     print(f"There are {len(dataset)} batches.")
                     continue
-                if instruction == "set_batch_permutation":
-                    print("Receiving permutation.")
-                    perm = inbox.get()
-                    print("Setting new permutation.")
-                    dataset.set_permutation(perm)
+                if instruction == "set_example_length":
+                    print("Setting new example length.")
+                    example_length = inbox.get()
+                    dataset.set_example_length(example_length)
+                    print(f"The example length is {example_length} tokens.")
                     continue
+
         print("Exiting process.")

@@ -10,18 +10,12 @@ class Trainer:
     def __init__(self,
                  model,
                  dataset,
-                 optimizer_class=None,
-                 batch_size=None,
-                 shuffle=True):
+                 optimizer_class=None):
         if optimizer_class is None:
            optimizer_class = torch.optim.AdamW
-        if batch_size is None:
-            batch_size = 1
         self.model = model
         self.dataset = dataset
         self.optimizer_class = optimizer_class
-        self.batch_size = batch_size
-        self.shuffle = shuffle
         self.inbox = Queue()
         self.outbox = Queue()
         self.running = False
@@ -31,18 +25,18 @@ class Trainer:
         self.data = []
 
     def set_batch_size(self, batch_size):
-        self.batch_size = batch_size
+        self.dataset.set_batch_size(batch_size)
         if self.running == True:
             self.outbox.put("set_batch_size")
-            self.outbox.put(self.batch_size)
+            self.outbox.put(batch_size)
             if self.paused == False:
                 self.outbox.put("start")
 
-    def set_batch_permutation(self, perm):
-        self.dataset.set_permutation(perm)
+    def set_example_length(self, N):
+        self.dataset.set_example_length(N)
         if self.running == True:
-            self.outbox.put("set_batch_permutation")
-            self.outbox.put(perm)
+            self.outbox.put("set_example_length")
+            self.outbox.put(N)
             if self.paused == False:
                 self.outbox.put("start")
 
@@ -57,8 +51,6 @@ class Trainer:
             self.outbox.put(self.model)
             self.outbox.put(self.dataset)
             self.outbox.put(self.optimizer_class)
-            self.outbox.put(self.batch_size)
-            self.outbox.put(self.shuffle)
             self.running = True
         self.outbox.put("start")
         self.running = True
@@ -102,7 +94,7 @@ class Trainer:
     def save(self, path=None):
         # todo: save the optimizer too
         if path is None:
-            path = self.model.name() + "_" + str(self.n) +".pt"
+            path = f"{self.model.name()}.pt"
         torch.save(self.model, path)
 
     def autocomplete(self, prompt="", N=1024):
