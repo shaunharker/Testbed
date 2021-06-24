@@ -12,3 +12,5 @@ from testbed.nn import Net0
 from testbed.nn import Net1
 from testbed.nn import Transformer
 from testbed.trainer import Trainer
+from testbed.util import Plot
+from testbed.util import decode_broken_utf8

@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from torch.optim import AdamW
 from torch.utils.data import DataLoader
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
@@ -20,32 +21,36 @@ class Worker(ctx.Process):
             outbox.put("ready")
             model = inbox.get()
             dataset = inbox.get()
-            UserOptimizer = inbox.get()
-            optimizer = UserOptimizer(model.parameters())
-            reporter = Reporter()
+            optimizer = inbox.get()
+            compute_time = inbox.get()
+            step = inbox.get()
+            optimizer = AdamW(model.parameters())
+            print(f"{step}. This is the worker process.")
+            if step > 0:
+                print(f"Model has been trained for {compute_time}s so far.")
+            # reporter = Reporter()
             parent = torch.multiprocessing.parent_process()
-            compute_time = 0.0
             waiting = False
             while True:
                 if not waiting:
-                    print(f"Waiting for instruction. {reporter.n} steps so far.")
+                    print(f"{step}. Waiting for instruction.")
                     waiting = True
                 try:
                     instruction = inbox.get(True,1.0)
                     waiting = False
                 except:
                     if not parent.is_alive():
-                        print("Orphaned, exiting.")
+                        print(f"{step}. Orphaned, exiting.")
                         instruction = "stop"
                         situation = "break"
                         break
                     continue
-                print(f"Received instruction '{instruction}'.")
+                print(f"{step}. Received instruction '{instruction}'.")
                 if instruction == "start":
                     with Stopwatch() as stopwatch:
                         situation = "normal"
                         while situation == "normal":
-                            print(f"Beginning epoch. B={dataset.B} N={dataset.N}")
+                            print(f"{step}. Entering training loop. B={dataset.B} N={dataset.N}")
                             model.train()
                             for X in DataLoader(dataset, batch_size=None, shuffle=False):
                                 if not parent.is_alive():
@@ -58,35 +63,37 @@ class Worker(ctx.Process):
                                 loss = model(X)
                                 loss.backward()
                                 optimizer.step()
+                                step += 1
                                 ######################
-                                reporter.step(loss.item())
-                                loss_outbox.put((reporter.n, compute_time + stopwatch.time_elapsed, loss.item()))
+                                # reporter.step(loss.item())
+                                #print(step, 'out')
+                                loss_outbox.put((step, compute_time + stopwatch.time_elapsed, loss.item()))
                                 try:
                                     instruction = inbox.get(False)
                                     if instruction != "start":
-                                        print(f"Interrupted by instruction '{instruction}'.")
+                                        print(f"{step}. Interrupted by instruction '{instruction}'.")
                                         situation = "break"
                                         break
                                 except:
                                     pass
                     compute_time += stopwatch.total_run_time
-                    print("Exiting compute loop.")
+                    print(f"{step}. Exiting compute loop.")
                 if instruction == "pause":
                     outbox.put("paused")
                     continue
                 if instruction == "stop":
                     break
                 if instruction == "set_batch_size":
-                    print("Setting new batch size.")
+                    print(f"{step}. Setting new batch size.")
                     batch_size = inbox.get()
                     dataset.set_batch_size(batch_size)
-                    print(f"There are {len(dataset)} batches.")
+                    print(f"{step}. There are {len(dataset)} batches.")
                     continue
                 if instruction == "set_example_length":
-                    print("Setting new example length.")
+                    print(f"{step}. Setting new example length.")
                     example_length = inbox.get()
                     dataset.set_example_length(example_length)
-                    print(f"The example length is {example_length} tokens.")
+                    print(f"{step}. The example length is {example_length} tokens.")
                     continue
 
-        print("Exiting process.")
+        print(f"{step}. Exiting process.")

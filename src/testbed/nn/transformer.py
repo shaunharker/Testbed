@@ -48,7 +48,7 @@ class PositionalEncoding(torch.nn.Module):
         return self.dropout(x)
 
 class Transformer(torch.nn.Module):
-    def __init__(self, ntoken=256, ninp=512, nhead=8, nhid=256, nlayers=2, dropout=0.5):
+    def __init__(self, ntoken=256, d_model=64, n_heads=8, d_ff=2048, nlayers=6, dropout=0.1):
         super(Transformer, self).__init__()
         self.L = 64
         self.hyp = {

@@ -24,9 +24,15 @@ class TextDataset:
             self.perform_shuffle(N)
         self.set_batch_size(B)
 
+    def state_dict(self):
+        return {"filename": self.filename,
+                "N": self.N,
+                "B": self.B,
+                "shuffle": self.shuffle }
+
     def load_tokens(self):
         try:
-            self.tokens = torch.load(self.filename + '.pt').to(device)
+            self.tokens = torch.load(self.filename + '.pt')
         except:
             self.tokens = torch.tensor(list(bytes(self.text, 'utf-8'))).byte()
             print("Saving dataset in .pt format")
@@ -57,7 +63,7 @@ class TextDataset:
     def set_example_length(self, N):
         self.N = N
         self.perform_shuffle(N)
-        
+
     def set_batch_size(self, B):
         self.B = B
         N = self.N
@@ -65,9 +71,10 @@ class TextDataset:
         self.D = D
         device = self.device
         self.batches = self.tokens[:D*B*N].view(D,B,N).contiguous().to(device)
+        self.perm = torch.randperm(D)
 
     def __getitem__(self, idx):
-        return self.batches[idx].long()
+        return self.batches[self.perm[idx]].long()
 
     def __len__(self):
         return self.D

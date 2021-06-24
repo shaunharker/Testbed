@@ -5,23 +5,23 @@ Process = ctx.Process
 Queue = ctx.Queue
 from ..util import decode_broken_utf8, default_device
 from .worker import Worker
+from ..data.textdataset import TextDataset
 
 class Trainer:
     def __init__(self,
-                 model,
-                 dataset,
-                 optimizer_class=None):
-        if optimizer_class is None:
-           optimizer_class = torch.optim.AdamW
+                 model=None,
+                 dataset=None,
+                 optimizer=None):
         self.model = model
         self.dataset = dataset
-        self.optimizer_class = optimizer_class
+        self.optimizer = optimizer
         self.inbox = Queue()
         self.outbox = Queue()
+        self.loss_inbox = Queue()
         self.running = False
         self.paused = None
-        self.loss_inbox = Queue()
-        self.loss_stream_pos = 0
+        self.step = 0
+        self.compute_time = 0.0
         self.data = []
 
     def set_batch_size(self, batch_size):
@@ -50,7 +50,9 @@ class Trainer:
             ready = self.inbox.get() # Wait for ready.
             self.outbox.put(self.model)
             self.outbox.put(self.dataset)
-            self.outbox.put(self.optimizer_class)
+            self.outbox.put(self.optimizer)
+            self.outbox.put(self.compute_time)
+            self.outbox.put(self.step)
             self.running = True
         self.outbox.put("start")
         self.running = True
@@ -58,27 +60,31 @@ class Trainer:
 
     def loss(self):
         start = len(self.data)
-        if self.running == True:
-            while True:
-                try:
-                    item = self.loss_inbox.get(False)
-                except:
-                    break
-                self.data.append(item)
-            return self.data[start:]
-        else:
-            return []
+        while True:
+            try:
+                item = self.loss_inbox.get(False)
+                self.step = item[0]
+                self.compute_time = item[1]
+                # print(f'recv {self.step}')
+            except:
+                break
+            self.data.append(item)
+            # print(f"{self.step}. {self.data}")
+        return self.data[start:]
 
     def pause(self):
         """
         Note: blocks until the remote is paused
         """
+        self.loss()
         if self.running == True:
             self.outbox.put("pause")
             self.paused = True
+            self.loss()
             self.inbox.get()
 
     def stop(self):
+        self.pause() # to get self.step and self.compute_time
         if self.running == True:
             self.outbox.put("stop")
             self.running = False
@@ -86,16 +92,32 @@ class Trainer:
             self.process.join()
 
     def load(self, path=None):
-        # todo: default load of last step, load opt
+        self.stop()
         if path is None:
-            path = self.model.name() + "_" + str(self.n) +".pt"
-        torch.save(self.model, path)
+            path = "checkpoint.pt"
+        checkpoint = torch.load(path)
+        self.compute_time = checkpoint["time"]
+        self.step = checkpoint["step"]
+        self.data = checkpoint["loss"]
+        self.model = checkpoint["model"]
+        self.optimizer = checkpoint["optimizer"]
+        self.dataset = TextDataset(**checkpoint["dataset"])
 
     def save(self, path=None):
-        # todo: save the optimizer too
+        was_paused = self.paused
+        self.pause()
         if path is None:
-            path = f"{self.model.name()}.pt"
-        torch.save(self.model, path)
+            path = "checkpoint.pt"
+        checkpoint = {
+            'time': self.compute_time,
+            'step': self.step,
+            'loss': self.data,
+            'model': self.model,
+            'optimizer': self.optimizer,
+            'dataset': self.dataset.state_dict()} # TODO: introduce schedulers
+        torch.save(checkpoint, 'checkpoint.pt')
+        if self.running and not was_paused:
+            self.start()
 
     def autocomplete(self, prompt="", N=1024):
         self.model.eval()
