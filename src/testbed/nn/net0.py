@@ -2,39 +2,51 @@ import torch
 from torch.nn import Module, Embedding, Linear, CrossEntropyLoss, Softmax
 
 class Net0(Module):
-    def __init__(self, H=256, L=64, K=8, C=256):
+    def __init__(self,
+                 num_input_classes=256,
+                 embedding_dim=8,
+                 context_length=64,
+                 num_hidden=256,
+                 num_output_classes=256):
         super(Net0, self).__init__()
-        self.C = C # number of classes
-        self.K = K # dimension of token embedding
-        self.L = L # context window length
-        self.H = H # number of hidden neurons
-        self.embedding = Embedding(C, K)
-        self.fc1 = Linear(L*K, H)
-        self.fc2 = Linear(H, C)
-        self.criterion = CrossEntropyLoss(reduction=None)
+        self.num_input_classes = num_input_classes # number of classes
+        self.embedding_dim = embedding_dim # dimension of token embedding
+        self.context_length = context_length # context window length
+        self.num_hidden = num_hidden # number of hidden neurons
+        self.num_output_classes = num_output_classes
+        self.embedding = Embedding(self.num_input_classes, self.embedding_dim)
+        self.encoder = Linear(self.embedding_dim*self.context_length, self.num_hidden)
+        self.decoder = Linear(self.num_hidden, self.num_output_classes)
+        self.criterion = CrossEntropyLoss(reduction='none')
         self.softmax = Softmax(dim=-1)
 
     def name(self):
-        return f"net0_H{self.H}_L{self.L}_K{self.K}_C{self.C}"
+        return f"net0({self.num_input_classes},{self.embedding_dim},{self.context_length},{self.num_hidden},{self.num_output_classes})"
 
-    def forward(self, X):
+    def forward(self, batch):
         """
-        Requires N = L + 1, where X.shape == [N, B]
+        example_length = batch.shape[-1]
+        assert example_length = self.context_length + 1
         """
-        L = self.L
-        K = self.K
-        x = self.embedding(X[:,-L-1:-1]) # x.shape == [B, L, K]
-        y = X[:,-1].view(-1) # y.shape == [B]
-        x = x.view(-1,L*K)  # s.shape == [B, L*K]
-        x = self.fc2(torch.sigmoid(self.fc1(x))) # x.shape == [B, C]
+        example_length = batch.shape[-1]
+        assert example_length == self.context_length + 1
+        x = batch[...,:-1] # x.shape
+        x = self.embedding(x) # x.shape == [..., self.context_length, self.embedding_dim]
+        y = batch[...,-1].view(-1) # y.shape == [...]
+        x = x.view(-1,self.context_length*self.embedding_dim) # x.shape == [..., self.context_length*self.embedding_dim]
+        x = self.encoder(x) # x.shape == [..., self.num_hidden]
+        x = torch.sigmoid(x) # x.shape == [..., self.num_hidden]
+        x = self.decoder(x) # x.shape == [..., self.num_output_classes]
         loss = self.criterion(x,y)
         return loss
 
     def probs(self, X):
-        L = self.L
-        K = self.K
-        x = self.embedding(X[:,-L:]) # x.shape == [B, L, K]
-        x = x.view(-1,L*K)  # s.shape == [B, L*K]
-        x = self.fc2(torch.sigmoid(self.fc1(x))) # x.shape == [B, C]
-        P = self.softmax(x)
+        L = self.context_length
+        K = self.embedding_dim
+        x = self.embedding(X[:,-self.context_length:]) # x.shape == [B, L, K]
+        x = x.view(-1,self.context_length*self.embedding_dim) # x.shape == [..., self.context_length*self.embedding_dim]
+        x = self.encoder(x) # x.shape == [..., self.num_hidden]
+        x = torch.sigmoid(x) # x.shape == [..., self.num_hidden]
+        x = self.decoder(x) # x.shape == [..., self.num_output_classes]
+        P = self.softmax(x) # P.shape == [..., self.num_output_classes]
         return P

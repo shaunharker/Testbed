@@ -1,7 +1,7 @@
 import torch
 from torch.optim import Optimizer
-from torch import sqrt
 from torch.distributions.log_normal import LogNormal
+import math
 
 class Sonny(Optimizer):
     r"""Implements Sonny algorithm.
@@ -28,11 +28,11 @@ class Sonny(Optimizer):
 
     def __init__(self,
                  parameters,
-                 llr=-1, # log learning rate. So much cooler!
+                 llr=math.log(.0001), # log learning rate. So much cooler!
                  alpha=0.5,
-                 beta=0.5,
+                 beta=0.1,
                  eps=1e-8,
-                 weight_decay=1e-3):
+                 weight_decay=0.0):
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps}")
         if not 0.0 <= alpha < 1.0:
@@ -41,13 +41,14 @@ class Sonny(Optimizer):
             raise ValueError(f"Invalid beta value: {beta}")
         if not 0.0 <= weight_decay:
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
-        super().__init__(parameters)
+        super().__init__(parameters, {})
         self.state['llr'] = llr
         self.state['alpha'] = alpha
         self.state['beta'] = beta
         self.state['eps'] = eps
         self.state['weight_decay'] = weight_decay
         self.state['step'] = 0
+        self.closure = None
 
     def params(self):
         """
@@ -65,75 +66,67 @@ class Sonny(Optimizer):
         for p in self.params():
             p.data += h*self.state[p]['v']
 
-    def compute_loss_and_grad():
-        """
-        computes loss at current parameter and also populates grad
-        returns loss.item()
-        """
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
-                loss.backward()
-        else:
-            raise RuntimeError("Sonny needs a closure to function.")
-        return loss.item()
-
-    def update(self, alpha=None, beta=None):
+    def update(self, substep=None):
         """
         Recomputes loss, grad at original point and updates moving averages.
-        Computes a new search direction v.
-        All outputs are stored in self.state
         """
-        if alpha is None:
-            alpha = self.state['alpha']
-        if beta is None:
-            beta = self.state['beta']
+        if substep is None:
+            self.state['substep'] = 0
+            self.state['examples'] = 0
 
-        f = self.state['loss'] = compute_loss_and_grad()
-        f2 = f ** 2
-        if 'mean_loss' not in self.state:
-            self.state['mean_loss'] = f
-            self.state['sqr_mean_loss'] = f2
-        else:
-            self.state['mean_loss'] += alpha * (f - self.state['mean_loss'])
-            self.state['sqr_mean_loss'] += alpha * (f2 - self.state['sqr_mean_loss'])
-        self.state['var_loss'] = self.state['sqr_mean_loss'] - self.state['mean_loss']**2
+        with torch.enable_grad():
+            (mean_loss, mean_sqr_loss, new_examples) = self.closure()
 
+        if self.state['step'] == 0 and self.state['substep'] == 0:
+            self.state['stats']['zscores'] = [0.0]
+            self.state['stats']['histogram'] = [1 if i == 4 else 0 for i in range(9)]
+
+        if self.state['step'] > 0:
+            zscore = (mean_loss - self.state['mean_loss'])/math.sqrt(self.state['var_loss'])
+            self.state['stats']['zscores'].append(zscore)
+            # also make a simplistic histogram for convenience
+            bin = round(zscore)
+            if bin >= -4 and bin <= 4:
+                self.state['stats']['histogram'][bin+4] += 1
+            print(f"Histogram: {self.state['stats']['histogram']}")
+        #print(f"Step {self.state['step']}. Substep {self.state['substep']}. {(mean_loss.item(), mean_sqr_loss.item(), examples)}")
+
+        if self.state['step'] == 0 and self.state['substep'] == 0:
+            self.state['ema_mean_loss'] = mean_loss
+            self.state['ema_mean_sqr_loss'] = mean_sqr_loss
+            for p in self.params():
+                self.state[p]['ema_grad'] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                self.state[p]['ema_sqr_grad'] = torch.ones_like(p, memory_format=torch.preserve_format)
+        if self.state['substep'] == 0:
+            self.state['examples'] = 0
+            self.state['mean_loss'] = mean_loss
+            self.state['mean_sqr_loss'] = mean_sqr_loss
+
+        avg = lambda x,y : (self.state['examples']*x + new_examples*y)/(self.state['examples']+new_examples)
+        self.state['mean_loss'] = avg(self.state['mean_loss'], mean_loss)
+        self.state['mean_sqr_loss'] = avg(self.state['mean_sqr_loss'], mean_sqr_loss)
+        self.state['var_loss'] = self.state['mean_sqr_loss'] - self.state['mean_loss']**2
+        self.state['ema_mean_loss'] += self.state['alpha'] * (mean_loss - self.state['ema_mean_loss'])
+        self.state['ema_mean_sqr_loss'] += self.state['alpha'] * (mean_sqr_loss - self.state['ema_mean_sqr_loss'])
+        self.state['var_ema_loss'] = self.state['ema_mean_sqr_loss'] - self.state['ema_mean_loss']**2
         for p in self.params():
-            if p.grad is None:
-                continue
-            if p.grad.is_sparse:
-                raise RuntimeError('Sonny does not support sparse gradients')
-            state = self.state[p]
-            df = p.grad.data
-            df2 = p.grad.data ** 2
-            if len(state) == 0:
-                state['exp_avg'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                state['exp_avg_sq'] = torch.ones_like(p, memory_format=torch.preserve_format)
-            g = state['exp_avg']
-            g2 = state['exp_avg_sq']
-            g += beta * (df - g)
-            g2 += beta * ((df2) - g2)
-        return f
+            self.state[p]['ema_grad'] += self.state['beta'] * (p.grad.data - self.state[p]['ema_grad'])
+            self.state[p]['ema_sqr_grad'] += self.state['beta'] * ((p.grad.data ** 2) - self.state[p]['ema_sqr_grad'])
+        self.state['examples'] += new_examples
+        return (mean_loss, mean_sqr_loss, new_examples)
 
     def compute_search_direction(self):
-        k = self.state['weight_decay']
+        #torch.set_printoptions(profile="full")
         for p in self.params():
-            state = self.state[p]
-            x = p.data
-            g = state['exp_avg']
-            g2 = state['exp_avg_sq']
-            var = torch.clamp(g2 - g**2, min=0)
-            v = torch.erf(g / sqrt(var)) # v = g / sqrt(var)
-            state['v'] = -(v + k * x)
-
-    def trial(self, h, closure):
-        self.move(h)
-        with torch.no_grad():
-            loss = closure()
-        self.move(-h)
-        return loss.item()
+            var_ema_grad = self.state[p]['ema_sqr_grad'] - self.state[p]['ema_grad']**2
+            v = torch.erf(self.state[p]['ema_grad'] /
+                          torch.sqrt(torch.clamp(var_ema_grad, min=self.state['eps'])))
+            self.state[p]['v'] = -(v + self.state['weight_decay'] * p.data)
+            #print(f"compute_search_direction. var_ema_grad = {var_ema_grad}")
+            #print(f"compute_search_direction. v = {v}")
+            if torch.any(torch.isnan(v)):
+                raise RuntimeError("nan")
+        #torch.set_printoptions(profile="default")
 
     @torch.no_grad()
     def step(self, closure):
@@ -143,21 +136,11 @@ class Sonny(Optimizer):
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
-        if closure is None:
-            raise RuntimeError("Sonny requires a closure.")
-
+        self.closure = closure
+        # print(f"Step {self.state['step']}. Starting optimization.")
+        h = LogNormal(self.state['llr'], 1).sample()
+        (base_mean_loss, base_mean_sqr_loss, base_examples) = self.update() # computes loss and grad and updates statistics at current param
+        self.compute_search_direction()
+        self.move(h)
         self.state['step'] += 1
-        # We draw the step size from a log-normal distribution.
-        # We slowly adjust the parameters of this distribution
-        # to track the step-sizes that worked after a look-ahead.
-        while True:
-            h = LogNormal(self.state['llr'], 1.0).sample()
-            self.update() # computes loss and grad and updates statistics at current param
-            self.compute_search_direction()
-            trial_loss = self.trial(h, closure)
-            zscore = (trial_loss - self.state['mean_loss'])/math.sqrt(self.state['var_loss'])
-            erf = torch.erf(torch.tensor(zscore)).item() # not very elegant
-            self.state['llr'] -= .01*erf*(math.log(h) - self.state['llr'])
-            if zscore <= -1.0:
-                move(h)
-                return self.state['loss']
+        return (base_mean_loss, base_mean_sqr_loss, base_examples)

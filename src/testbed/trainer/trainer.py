@@ -10,21 +10,20 @@ from ..data import TextDataset
 class Trainer:
     def __init__(self,
                  model=None,
-                 N=64, # text example length
-                 B=32, # initial batch size
+                 example_length=64, # text example length
+                 batch_size=32, # initial batch size
                  OptimizerType=None,
                  dataset=None):
         self.model = model.to(device='cuda')
-        self.N = N
-        self.B = B
+        self.example_length = example_length
+        self.batch_size = batch_size
         if OptimizerType is None:
             OptimizerType = torch.optim.AdamW
         self.OptimizerType = OptimizerType
         if dataset is None:
-            self.dataset = TextDataset(N=N)
+            self.dataset = TextDataset(example_length=example_length)
         else:
             self.dataset = dataset
-        self.datafile = dataset.filename
         self.inbox = Queue()
         self.outbox = Queue()
         self.loss_inbox = Queue()
@@ -40,13 +39,31 @@ class Trainer:
             self.outbox.put(batch_size)
             if self.paused == False:
                 self.outbox.put("start")
+        self.batch_size = batch_size
 
-    def set_example_length(self, N):
+    def set_example_length(self, example_length):
         if self.running == True:
             self.outbox.put("set_example_length")
-            self.outbox.put(N)
+            self.outbox.put(example_length)
             if self.paused == False:
                 self.outbox.put("start")
+        self.example_length = example_length
+
+    def set_optimizer_settings(self, **settings):
+        if self.running == True:
+            self.outbox.put("set_optimizer_settings")
+            self.outbox.put(settings)
+            if self.paused == False:
+                self.outbox.put("start")
+
+    def get_optimizer_stats(self):
+        stats = None
+        if self.running == True:
+            self.outbox.put("get_optimizer_stats")
+            stats = self.inbox.get()
+            if self.paused == False:
+                self.outbox.put("start")
+        return stats
 
     def status(self):
         return f"Running: {self.running}\nPaused: {self.paused}"
@@ -57,8 +74,8 @@ class Trainer:
             self.process.start()
             ready = self.inbox.get() # Wait for ready.
             self.outbox.put(self.model)
-            self.outbox.put(self.N) # example length
-            self.outbox.put(self.B) # batch size
+            self.outbox.put(self.example_length)
+            self.outbox.put(self.batch_size)
             self.outbox.put(self.OptimizerType)
             self.outbox.put(self.dataset)
             self.outbox.put(self.compute_time)
@@ -75,11 +92,9 @@ class Trainer:
                 item = self.loss_inbox.get(False)
                 self.step = item[0]
                 self.compute_time = item[1]
-                # print(f'recv {self.step}')
             except:
                 break
             self.losses.append(item)
-            # print(f"{self.step}. {self.losses}")
         return self.losses
 
     def pause(self):
@@ -107,16 +122,16 @@ class Trainer:
         checkpoint = torch.load(path)
         self.compute_time = checkpoint["time"]
         self.step = checkpoint["step"]
-        self.losses = checkpoint["loss"]
+        self.losses = checkpoint["losses"]
         self.model = checkpoint["model"].to(device='cuda')
-        self.N = checkpoint["sequence_length"]
-        self.B = checkpoint["batch_size"]
-        datafile = checkpoint["datafile"]
-        if datafile == self.datafile:
-            self.dataset.set_example_length(self.N)
+        self.example_length = checkpoint["example_length"]
+        self.batch_size = checkpoint["batch_size"]
+        self.OptimizerType = checkpoint["OptimizerType"]
+        filename = checkpoint["dataset.filename"]
+        if filename == self.dataset.filename:
+            self.dataset.set_example_length(self.example_length)
         else:
-            self.datafile = datafile
-            self.dataset = TextDataset(filename=self.datafile, N=self.N)
+            self.dataset = TextDataset(filename=filename, example_length=self.example_length)
 
     def save(self, path=None):
         was_paused = self.paused
@@ -129,15 +144,15 @@ class Trainer:
         if self.running and not was_paused:
             self.start()
 
-    def autocomplete(self, prompt="", N=1024):
+    def autocomplete(self, prompt="", output_length=1024):
         was_paused = self.paused
         self.pause()
-        L = self.N - 1
+        L = self.example_length - 1  # CODE SMELL (refactor net0 to not compute own loss, refactor closure to reflect new case, etc.)
         self.model.eval()
         prompt = [b for b in bytes(self.dataset.random_text_snippet() + prompt, 'utf-8')][-L:]
         completion = []
         tail = prompt
-        for _ in range(N):
+        for _ in range(output_length):
             x = (torch.tensor(tail)
                       .unsqueeze(0)
                       .to(default_device())) # shape [1,L]
