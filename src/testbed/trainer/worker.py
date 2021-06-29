@@ -1,10 +1,11 @@
 import numpy as np
 import torch
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from ..optim import Sonny
+from torch.utils.data import DataLoader, RandomSampler
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
-
+from queue import Empty
 from ..util import IgnoreKeyboardInterrupt, Reporter, Stopwatch, default_device
 import time
 
@@ -15,24 +16,49 @@ class Worker(ctx.Process):
         self.outbox = outbox
         self.loss_outbox = loss_outbox
 
+    def closure(self):
+        if torch.is_grad_enabled():
+            self.optimizer.zero_grad()
+        mean_loss = 0.0
+        var_loss = 0.0
+        for outer_batch_idx in range(self.outer_batch):
+            try:
+                self.instruction = self.inbox.get(False)
+                if self.instruction != "start":
+                    print(f"{step}. Interrupted at time {step_info[1]} by instruction '{instruction}'.")
+                    raise KeyboardInterrupt
+            except Empty:
+                pass
+            X = self.loader.batch(batch_size=self.inner_batch).to(device='cuda',dtype=torch.long, non_blocking=True)
+            losses = self.model(X)
+            loss = torch.sum(losses)/self.inner_batch
+            mean_loss += loss.item()
+            if self.inner_batch > 1:
+                var_loss += torch.sum((losses.detach() - loss.detach())**2).item()
+            if torch.is_grad_enabled():
+                loss.backward()
+        mean_loss /= self.outer_batch
+        var_loss /= (self.inner_batch*self.outer_batch - 1) # bessel correction
+        return (mean_loss, var_loss)
+
     def run(self):
         inbox = self.inbox
         outbox = self.outbox
         loss_outbox = self.loss_outbox
         with IgnoreKeyboardInterrupt():
             outbox.put("ready")
-            model = inbox.get()
+            model = self.model = inbox.get()
             N = inbox.get()
             B = inbox.get()
-            optimizer = inbox.get()
-            dataset = inbox.get()
+            OptimizerType = inbox.get()
+            dataset = self.dataset = inbox.get()
             compute_time = inbox.get()
             step = inbox.get()
             losses = inbox.get()
             dataset.cache_data()
-            outer_batch = 1 # if batches can't fit, we'll divide it up and loop before calling optimizer
-            if len(optimizer.state_dict()['state']) == 0:
-                optimizer = torch.optim.AdamW(model.parameters()) #can we use same class? check python docs...
+            self.loader = Loader(dataset, batch_size=B)
+            optimizer = self.optimizer = OptimizerType(model.parameters())
+            self.outer_batch = 1 # if batches can't fit, we'll divide it up and loop before calling optimizer
             print(f"{step}. This is the worker process.")
             if step > 0:
                 print(f"Model has been trained for {compute_time}s so far.")
@@ -55,67 +81,26 @@ class Worker(ctx.Process):
                     continue
                 print(f"{step}. Received instruction '{instruction}' at time {compute_time}.")
                 if instruction == "start":
+                    print(f"{step}. Entering training loop at time {compute_time + stopwatch.time_elapsed}. B={B} N={dataset.N}")
+                    print(f"{step}. There are {len(dataset)} examples in the dataset.")
                     with Stopwatch() as stopwatch:
-                        situation = "normal"
-                        while situation == "normal":
-                            print(f"{step}. Entering training loop at time {compute_time + stopwatch.time_elapsed}. B={B} N={dataset.N}")
-                            model.train()
-                            context_entry_time = time.time() # We only want to time the interior of the context, not the entry and exit
-                            context_exit_time = None
-                            first_pass = True
-                            running_loss = 0.0
-                            if B > 8192:
-                                outer_batch = B//8192
-                                inner_batch = 8192
-                            else:
-                                outer_batch = 1
-                                inner_batch = B
-                            starting_modulus = step % outer_batch
-                            outer_batch_idx = 0
-                            for X in DataLoader(dataset,
-                                                batch_size=inner_batch,
-                                                shuffle=True,
-                                                pin_memory=True,
-                                                drop_last=True):
-                                if first_pass:
-                                    context_entry_time = time.time() - context_entry_time
-                                    first_pass = False
-                                X = X.to(device='cuda',dtype=torch.long, non_blocking=True)
-                                if not parent.is_alive():
-                                    situation = "break"
-                                    context_exit_time = time.time() # we're crashing, but rules are rules after all
-                                    break
-                                ######################
-                                # THE ACTUAL PROGRAM #
-                                ######################
-                                if outer_batch_idx % outer_batch == 0:
-                                    running_loss = 0
-                                    optimizer.zero_grad()
-                                loss = model(X)
-                                loss.backward(retain_graph = True)
-                                running_loss += loss.item()
-                                if (outer_batch_idx+1) % outer_batch == 0:
-                                    optimizer.step()
-                                    step += 1
-                                ######################
-                                outer_batch_idx += 1
-                                context_exit_time = time.time() # just in case
-                                if outer_batch_idx % outer_batch == 0:
-                                    step_info = [step, compute_time + stopwatch.time_elapsed - context_entry_time, running_loss/outer_batch ]
-                                    running_loss = 0.0
-                                    losses.append(step_info)
-                                    loss_outbox.put(step_info)
-                                    #print(step, compute_time + stopwatch.time_elapsed - context_entry_time)
-                                    try:
-                                        instruction = inbox.get(False)
-                                        if instruction != "start":
-                                            print(f"{step}. Interrupted at time {step_info[1]} by instruction '{instruction}'.")
-                                            situation = "break"
-                                            break
-                                    except:
-                                        pass
-                            context_exit_time = time.time() - context_exit_time
-                    compute_time += stopwatch.total_run_time - context_entry_time - context_exit_time
+                        while True:
+                            if not parent.is_alive():
+                                raise RuntimeError("Parent process is not alive.")
+                            (self.outer_batch, self.inner_batch) = (
+                                (B // 8192, 8192) if B > 8192 else
+                                (1, B) )        # if B <= 8192
+                            self.loader.set_batch_size(self.inner_batch)
+                            try:
+                                (loss, var) = optimizer.step(self.closure)
+                            except KeyboardInterrupt:
+                                instruction = self.instruction
+                                break
+                            step += 1
+                            step_info = [step, compute_time + stopwatch.time_elapsed, loss, var]
+                            losses.append(step_info)
+                            loss_outbox.put(step_info)
+                    compute_time += stopwatch.total_run_time
                     print(f"{step}. Exiting compute loop at time {compute_time}.")
                 if instruction == "pause":
                     outbox.put("paused")
@@ -125,7 +110,7 @@ class Worker(ctx.Process):
                 if instruction == "set_batch_size":
                     print(f"{step}. Setting new batch size.")
                     B = inbox.get()
-                    print(f"{step}. There are {len(dataset)//B} batches.")
+                    print(f"{step}. There are {len(dataset)//B} batches in the dataset.")
                     continue
                 if instruction == "set_example_length":
                     print(f"{step}. Setting new example length.")

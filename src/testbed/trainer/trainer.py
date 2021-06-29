@@ -12,12 +12,14 @@ class Trainer:
                  model=None,
                  N=64, # text example length
                  B=32, # initial batch size
-                 optimizer=None,
+                 OptimizerType=None,
                  dataset=None):
         self.model = model.to(device='cuda')
         self.N = N
         self.B = B
-        self.optimizer = optimizer
+        if OptimizerType is None:
+            OptimizerType = torch.optim.AdamW
+        self.OptimizerType = OptimizerType
         if dataset is None:
             self.dataset = TextDataset(N=N)
         else:
@@ -57,7 +59,7 @@ class Trainer:
             self.outbox.put(self.model)
             self.outbox.put(self.N) # example length
             self.outbox.put(self.B) # batch size
-            self.outbox.put(self.optimizer)
+            self.outbox.put(self.OptimizerType)
             self.outbox.put(self.dataset)
             self.outbox.put(self.compute_time)
             self.outbox.put(self.step)
@@ -88,7 +90,7 @@ class Trainer:
             self.outbox.put("pause")
             self.paused = True
             self.inbox.get()
-        self.loss()
+        self.update_losses()
 
     def stop(self):
         self.pause() # to get self.step and self.compute_time
@@ -107,7 +109,6 @@ class Trainer:
         self.step = checkpoint["step"]
         self.losses = checkpoint["loss"]
         self.model = checkpoint["model"].to(device='cuda')
-        self.optimizer = checkpoint["optimizer"]
         self.N = checkpoint["sequence_length"]
         self.B = checkpoint["batch_size"]
         datafile = checkpoint["datafile"]

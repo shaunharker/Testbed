@@ -8,9 +8,11 @@ import testbed.trainer
 import testbed.util
 
 from testbed.data import TextDataset
+from testbed.data import Loader
 from testbed.nn import Net0
 from testbed.nn import Net1
 from testbed.nn import Transformer
 from testbed.trainer import Trainer
 from testbed.util import Plot
 from testbed.util import decode_broken_utf8
+from testbed.optim import Sonny

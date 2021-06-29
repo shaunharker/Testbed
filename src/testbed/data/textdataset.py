@@ -7,7 +7,7 @@ import numpy as np
 
 class TextDataset:
     def __init__(self,
-                 filename='/home/sharker/data/corpus.txt',
+                 filename='/home/sharker/data/corpus.utf8.txt',
                  N=64):
         self.set_data_path(filename)
         self.set_example_length(N)
@@ -25,14 +25,15 @@ class TextDataset:
 
     def __getitem__(self, idx):
         if self.data is None:
+            offset = idx # randrange(self.data_len-self.N)
             return torch.as_tensor(np.fromfile(self.filename, dtype=np.ubyte,
-                count=self.N, sep='', offset=idx*self.N))
+                count=self.N, sep='', offset=offset))
         else:
-            start = self.N*idx
-            return self.data[start:start+self.N]
+            offset = idx # randrange(self.data_len-self.N)
+            return self.data[offset:offset+self.N]
 
     def __len__(self):
-        return self.data_len // self.N
+        return self.data_len - self.N
 
     def random_text_snippet(self):
         idx = randrange(len(self))

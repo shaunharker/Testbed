@@ -11,7 +11,7 @@ class Net0(Module):
         self.embedding = Embedding(C, K)
         self.fc1 = Linear(L*K, H)
         self.fc2 = Linear(H, C)
-        self.criterion = CrossEntropyLoss()
+        self.criterion = CrossEntropyLoss(reduction=None)
         self.softmax = Softmax(dim=-1)
 
     def name(self):
