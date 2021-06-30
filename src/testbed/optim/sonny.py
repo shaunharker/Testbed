@@ -13,12 +13,13 @@ class Sonny(Optimizer):
     Args:
         parameters (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
-        llr (float, optional): initial log learning rate (default: -1)
+        lr (float, optional): initial learning rate (default: .01)
         alpha (float, optional): EMA parameter for loss/sqrloss (default: 0.5)
-        beta (float, optional): EMA parameter for grad/sqrgrad (default: 0.5)
+        beta1 (float, optional): EMA parameter for grad/sqrgrad (default: 0.01)
+        beta2 (float, optional): EMA parameter for grad/sqrgrad (default: 0.0001)
         eps (float, optional): term added to the denominator to improve
             numerical stability (default: 1e-8)
-        weight_decay (float, optional): weight decay coefficient (default: 1e-2)
+        weight_decay (float, optional): weight decay coefficient (default: .01)
 
     .. _Adam\: A Method for Stochastic Optimization:
         https://arxiv.org/abs/1412.6980
@@ -28,23 +29,25 @@ class Sonny(Optimizer):
 
     def __init__(self,
                  parameters,
-                 llr=math.log(.0001), # log learning rate. So much cooler!
-                 alpha=0.5,
-                 beta=0.1,
+                 lr=.001,
+                 beta1=0.01,
+                 beta2=0.0001,
                  eps=1e-8,
-                 weight_decay=0.0):
+                 weight_decay=0.01):
+        if not 0.0 <= lr:
+            raise ValueError(f"Invalid lr value: {lr}")
+        if not 0.0 <= beta1 < 1.0:
+            raise ValueError(f"Invalid beta1 value: {beta1}")
+        if not 0.0 <= beta2 < 1.0:
+            raise ValueError(f"Invalid beta2 value: {beta2}")
         if not 0.0 <= eps:
-            raise ValueError(f"Invalid epsilon value: {eps}")
-        if not 0.0 <= alpha < 1.0:
-            raise ValueError(f"Invalid alpha value: {alpha}")
-        if not 0.0 <= beta < 1.0:
-            raise ValueError(f"Invalid beta value: {beta}")
+            raise ValueError(f"Invalid eps value: {eps}")
         if not 0.0 <= weight_decay:
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
         super().__init__(parameters, {})
-        self.state['llr'] = llr
-        self.state['alpha'] = alpha
-        self.state['beta'] = beta
+        self.state['lr'] = lr
+        self.state['beta1'] = beta1
+        self.state['beta2'] = beta2
         self.state['eps'] = eps
         self.state['weight_decay'] = weight_decay
         self.state['step'] = 0
@@ -79,24 +82,16 @@ class Sonny(Optimizer):
 
         if self.state['step'] == 0 and self.state['substep'] == 0:
             self.state['stats']['zscores'] = [0.0]
-            self.state['stats']['histogram'] = [1 if i == 4 else 0 for i in range(9)]
 
         if self.state['step'] > 0:
             zscore = (mean_loss - self.state['mean_loss'])/math.sqrt(self.state['var_loss'])
             self.state['stats']['zscores'].append(zscore)
-            # also make a simplistic histogram for convenience
-            bin = round(zscore)
-            if bin >= -4 and bin <= 4:
-                self.state['stats']['histogram'][bin+4] += 1
-            print(f"Histogram: {self.state['stats']['histogram']}")
-        #print(f"Step {self.state['step']}. Substep {self.state['substep']}. {(mean_loss.item(), mean_sqr_loss.item(), examples)}")
 
         if self.state['step'] == 0 and self.state['substep'] == 0:
-            self.state['ema_mean_loss'] = mean_loss
-            self.state['ema_mean_sqr_loss'] = mean_sqr_loss
             for p in self.params():
                 self.state[p]['ema_grad'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                self.state[p]['ema_sqr_grad'] = torch.ones_like(p, memory_format=torch.preserve_format)
+                self.state[p]['ema_sqr_grad'] = torch.zeros_like(p, memory_format=torch.preserve_format)
+
         if self.state['substep'] == 0:
             self.state['examples'] = 0
             self.state['mean_loss'] = mean_loss
@@ -106,27 +101,24 @@ class Sonny(Optimizer):
         self.state['mean_loss'] = avg(self.state['mean_loss'], mean_loss)
         self.state['mean_sqr_loss'] = avg(self.state['mean_sqr_loss'], mean_sqr_loss)
         self.state['var_loss'] = self.state['mean_sqr_loss'] - self.state['mean_loss']**2
-        self.state['ema_mean_loss'] += self.state['alpha'] * (mean_loss - self.state['ema_mean_loss'])
-        self.state['ema_mean_sqr_loss'] += self.state['alpha'] * (mean_sqr_loss - self.state['ema_mean_sqr_loss'])
-        self.state['var_ema_loss'] = self.state['ema_mean_sqr_loss'] - self.state['ema_mean_loss']**2
+
         for p in self.params():
-            self.state[p]['ema_grad'] += self.state['beta'] * (p.grad.data - self.state[p]['ema_grad'])
-            self.state[p]['ema_sqr_grad'] += self.state['beta'] * ((p.grad.data ** 2) - self.state[p]['ema_sqr_grad'])
+            self.state[p]['ema_grad'].mul_(1-self.state['beta1']).add_(p.grad.data, alpha=self.state['beta1'])
+            self.state[p]['ema_sqr_grad'].mul_(1-self.state['beta2']).addcmul_(p.grad.data, p.grad.data, value=self.state['beta2'])
+            #self.state[p]['ema_grad'] += self.state['beta1'] * (p.grad.data - self.state[p]['ema_grad'])
+            #self.state[p]['ema_sqr_grad'] += self.state['beta2'] * ((p.grad.data ** 2) - self.state[p]['ema_sqr_grad'])
         self.state['examples'] += new_examples
         return (mean_loss, mean_sqr_loss, new_examples)
 
     def compute_search_direction(self):
-        #torch.set_printoptions(profile="full")
+        bias_correction1 = 1 - (1-self.state['beta1']) ** (1+self.state['step'])
+        bias_correction2 = 1 - (1-self.state['beta2']) ** (1+self.state['step'])
         for p in self.params():
-            var_ema_grad = self.state[p]['ema_sqr_grad'] - self.state[p]['ema_grad']**2
-            v = torch.erf(self.state[p]['ema_grad'] /
-                          torch.sqrt(torch.clamp(var_ema_grad, min=self.state['eps'])))
+            v = ((self.state[p]['ema_grad']/bias_correction1)/
+                 (torch.sqrt(self.state[p]['ema_sqr_grad']/bias_correction2)+self.state['eps']))
             self.state[p]['v'] = -(v + self.state['weight_decay'] * p.data)
-            #print(f"compute_search_direction. var_ema_grad = {var_ema_grad}")
-            #print(f"compute_search_direction. v = {v}")
             if torch.any(torch.isnan(v)):
                 raise RuntimeError("nan")
-        #torch.set_printoptions(profile="default")
 
     @torch.no_grad()
     def step(self, closure):
@@ -138,9 +130,12 @@ class Sonny(Optimizer):
         """
         self.closure = closure
         # print(f"Step {self.state['step']}. Starting optimization.")
-        h = LogNormal(self.state['llr'], 1).sample()
+        h = self.state['lr']
         (base_mean_loss, base_mean_sqr_loss, base_examples) = self.update() # computes loss and grad and updates statistics at current param
         self.compute_search_direction()
         self.move(h)
         self.state['step'] += 1
         return (base_mean_loss, base_mean_sqr_loss, base_examples)
+
+    def tune(self, closure):
+        pass

@@ -93,6 +93,11 @@ class Worker(ctx.Process):
                     print(f"{self.step}. There are {len(self.dataset)} examples in self.dataset.")
                     print(f"{self.step}. They will be looped through repeatedly until interrupted.")
                     with Stopwatch() as stopwatch:
+                        # Try to tune the optimizer if it has this feature
+                        try:
+                            self.optimizer.tune(self.closure)
+                        except:
+                            pass
                         while True:
                             if not parent.is_alive():
                                 raise RuntimeError("Parent process is not alive.")
