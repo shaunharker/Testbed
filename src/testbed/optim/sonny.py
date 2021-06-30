@@ -13,10 +13,9 @@ class Sonny(Optimizer):
     Args:
         parameters (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
-        lr (float, optional): initial learning rate (default: .01)
-        alpha (float, optional): EMA parameter for loss/sqrloss (default: 0.5)
-        beta1 (float, optional): EMA parameter for grad/sqrgrad (default: 0.01)
-        beta2 (float, optional): EMA parameter for grad/sqrgrad (default: 0.0001)
+        lr (float, optional): initial learning rate (default: .001)
+        beta1 (float, optional): EMA parameter for grad/sqrgrad (default: 0.9)
+        beta2 (float, optional): EMA parameter for grad/sqrgrad (default: 0.999)
         eps (float, optional): term added to the denominator to improve
             numerical stability (default: 1e-8)
         weight_decay (float, optional): weight decay coefficient (default: .01)
@@ -30,8 +29,8 @@ class Sonny(Optimizer):
     def __init__(self,
                  parameters,
                  lr=.001,
-                 beta1=0.01,
-                 beta2=0.0001,
+                 beta1=0.9,
+                 beta2=0.999,
                  eps=1e-8,
                  weight_decay=0.01):
         if not 0.0 <= lr:
@@ -103,16 +102,16 @@ class Sonny(Optimizer):
         self.state['var_loss'] = self.state['mean_sqr_loss'] - self.state['mean_loss']**2
 
         for p in self.params():
-            self.state[p]['ema_grad'].mul_(1-self.state['beta1']).add_(p.grad.data, alpha=self.state['beta1'])
-            self.state[p]['ema_sqr_grad'].mul_(1-self.state['beta2']).addcmul_(p.grad.data, p.grad.data, value=self.state['beta2'])
-            #self.state[p]['ema_grad'] += self.state['beta1'] * (p.grad.data - self.state[p]['ema_grad'])
-            #self.state[p]['ema_sqr_grad'] += self.state['beta2'] * ((p.grad.data ** 2) - self.state[p]['ema_sqr_grad'])
+            self.state[p]['ema_grad'].mul_(self.state['beta1']).add_(p.grad.data, alpha=1-self.state['beta1'])
+            self.state[p]['ema_sqr_grad'].mul_(self.state['beta2']).addcmul_(p.grad.data, p.grad.data, value=1-self.state['beta2'])
+            #self.state[p]['ema_grad'] += (1-self.state['beta1']) * (p.grad.data - self.state[p]['ema_grad'])
+            #self.state[p]['ema_sqr_grad'] += (1-self.state['beta2']) * ((p.grad.data ** 2) - self.state[p]['ema_sqr_grad'])
         self.state['examples'] += new_examples
         return (mean_loss, mean_sqr_loss, new_examples)
 
     def compute_search_direction(self):
-        bias_correction1 = 1 - (1-self.state['beta1']) ** (1+self.state['step'])
-        bias_correction2 = 1 - (1-self.state['beta2']) ** (1+self.state['step'])
+        bias_correction1 = 1 - self.state['beta1'] ** (1+self.state['step'])
+        bias_correction2 = 1 - self.state['beta2'] ** (1+self.state['step'])
         for p in self.params():
             v = ((self.state[p]['ema_grad']/bias_correction1)/
                  (torch.sqrt(self.state[p]['ema_sqr_grad']/bias_correction2)+self.state['eps']))
