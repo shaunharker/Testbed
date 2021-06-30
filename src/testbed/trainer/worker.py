@@ -19,9 +19,10 @@ class Worker(ctx.Process):
         self.step_info = (0,0,0,0)
 
     def closure(self):
-        if self.batch_size > 8192:
-            self.outer_batch = self.batch_size // 8192
-            self.inner_batch = 8192
+        crit = 1024
+        if self.batch_size > crit:
+            self.outer_batch = self.batch_size // crit
+            self.inner_batch = crit
         else:
             self.outer_batch = 1
             self.inner_batch = self.batch_size
@@ -118,20 +119,29 @@ class Worker(ctx.Process):
                 if instruction == "stop":
                     break
                 if instruction == "set_optimizer_settings":
+                    print(f"{self.step}. Setting optimizer settings.")
                     settings = self.inbox.get()
                     for (k,v) in settings.items():
                         self.optimizer.state[k] = v
+                        if k == 'batch_size':
+                            self.batch_size = v
+                            print(f"{self.step}. The batch size is now {self.batch_size}.")
+                        if k == 'example_length':
+                            self.example_length = v
+                            self.dataset.set_example_length(self.example_length)
+                            print(f"{self.step}. The example length is now {example_length} tokens.")
                     continue
                 if instruction == "get_optimizer_stats":
+                    print(f"{self.step}. Getting optimizer settings.")
                     self.outbox.put(self.optimizer.state['stats'])
                     continue
                 if instruction == "set_batch_size":
                     print(f"{self.step}. Setting new batch size.")
                     self.batch_size = self.inbox.get()
-                    print(f"{self.step}. There are {len(self.dataset)//self.batch_size} batches in self.dataset.")
+                    print(f"{self.step}. The batch size is now {self.batch_size}.")
                     continue
                 if instruction == "set_example_length":
-                    print(f"{self.step}. Setting new example length.")
+                    print(f"{self.step}. Setting example length.")
                     self.example_length = self.inbox.get()
                     self.dataset.set_example_length(self.example_length)
                     print(f"{self.step}. The example length is now {example_length} tokens.")

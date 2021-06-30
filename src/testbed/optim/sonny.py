@@ -1,6 +1,7 @@
 import torch
 from torch.optim import Optimizer
 from torch.distributions.log_normal import LogNormal
+from .tracker import Accumulator, EMA, MedianTracker
 import math
 
 class Sonny(Optimizer):
@@ -29,6 +30,7 @@ class Sonny(Optimizer):
     def __init__(self,
                  parameters,
                  lr=.001,
+                 alpha=0.999,
                  beta1=0.9,
                  beta2=0.999,
                  eps=1e-8,
@@ -45,6 +47,7 @@ class Sonny(Optimizer):
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
         super().__init__(parameters, {})
         self.state['lr'] = lr
+        self.state['alpha'] = alpha
         self.state['beta1'] = beta1
         self.state['beta2'] = beta2
         self.state['eps'] = eps
@@ -53,88 +56,50 @@ class Sonny(Optimizer):
         self.closure = None
 
     def params(self):
-        """
-        return parameters in a list. parameter specific information
-        shall be stored in self.state[p][key]
-        """
         return [p for group in self.param_groups for p in group['params']
                 if p.grad is not None and not p.grad.is_sparse]
 
-    def move(self, h):
-        """
-        Step along search direction by factor h
-        p <- p + h * v
-        """
-        for p in self.params():
-            p.data += h*self.state[p]['v']
+    def setup(self):
+        self.state['stats']['loss'] = Accumulator()
+        for (idx, p) in enumerate(self.params()):
+            zeros = lambda : torch.zeros_like(p, memory_format=torch.preserve_format)
+            self.state[idx]={'ema_grad': EMA(self.state['beta1'], zeros()),
+                                  'ema_sqr_grad': EMA(self.state['beta2'], zeros())}
+            self.state['stats'][idx]={'sum_grad': zeros(),
+                                           'sum_sqr_grad': zeros()}
 
-    def update(self, substep=None):
-        """
-        Recomputes loss, grad at original point and updates moving averages.
-        """
-        if substep is None:
-            self.state['substep'] = 0
-            self.state['examples'] = 0
-
+    def update(self):
         with torch.enable_grad():
-            (mean_loss, mean_sqr_loss, new_examples) = self.closure()
-
-        if self.state['step'] == 0 and self.state['substep'] == 0:
-            self.state['stats']['zscores'] = [0.0]
-
-        if self.state['step'] > 0:
-            zscore = (mean_loss - self.state['mean_loss'])/math.sqrt(self.state['var_loss'])
-            self.state['stats']['zscores'].append(zscore)
-
-        if self.state['step'] == 0 and self.state['substep'] == 0:
-            for p in self.params():
-                self.state[p]['ema_grad'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                self.state[p]['ema_sqr_grad'] = torch.zeros_like(p, memory_format=torch.preserve_format)
-
-        if self.state['substep'] == 0:
-            self.state['examples'] = 0
-            self.state['mean_loss'] = mean_loss
-            self.state['mean_sqr_loss'] = mean_sqr_loss
-
-        avg = lambda x,y : (self.state['examples']*x + new_examples*y)/(self.state['examples']+new_examples)
-        self.state['mean_loss'] = avg(self.state['mean_loss'], mean_loss)
-        self.state['mean_sqr_loss'] = avg(self.state['mean_sqr_loss'], mean_sqr_loss)
-        self.state['var_loss'] = self.state['mean_sqr_loss'] - self.state['mean_loss']**2
-
-        for p in self.params():
-            self.state[p]['ema_grad'].mul_(self.state['beta1']).add_(p.grad.data, alpha=1-self.state['beta1'])
-            self.state[p]['ema_sqr_grad'].mul_(self.state['beta2']).addcmul_(p.grad.data, p.grad.data, value=1-self.state['beta2'])
-            #self.state[p]['ema_grad'] += (1-self.state['beta1']) * (p.grad.data - self.state[p]['ema_grad'])
-            #self.state[p]['ema_sqr_grad'] += (1-self.state['beta2']) * ((p.grad.data ** 2) - self.state[p]['ema_sqr_grad'])
-        self.state['examples'] += new_examples
-        return (mean_loss, mean_sqr_loss, new_examples)
+            (mean_loss, mean_sqr_loss, examples) = self.closure()
+        if self.state['step'] == 0:
+            self.setup()
+        self.state['stats']['loss'].step([mean_loss*examples, mean_sqr_loss*examples, examples])
+        for (idx, p) in enumerate(self.params()):
+            self.state[idx]['ema_grad'].step(p.grad.data)
+            self.state[idx]['ema_sqr_grad'].step(p.grad.data**2)
+            self.state['stats'][idx]['sum_grad'] += p.grad.data
+            self.state['stats'][idx]['sum_sqr_grad'] += p.grad.data**2
+        return (mean_loss, mean_sqr_loss, examples)
 
     def compute_search_direction(self):
         bias_correction1 = 1 - self.state['beta1'] ** (1+self.state['step'])
         bias_correction2 = 1 - self.state['beta2'] ** (1+self.state['step'])
-        for p in self.params():
-            v = ((self.state[p]['ema_grad']/bias_correction1)/
-                 (torch.sqrt(self.state[p]['ema_sqr_grad']/bias_correction2)+self.state['eps']))
+        for (idx, p) in enumerate(self.params()):
+            v = ((self.state[idx]['ema_grad']()/bias_correction1)/
+                 (torch.sqrt(self.state[idx]['ema_sqr_grad']()/bias_correction2)+self.state['eps']))
             self.state[p]['v'] = -(v + self.state['weight_decay'] * p.data)
             if torch.any(torch.isnan(v)):
                 raise RuntimeError("nan")
 
+    def move(self, h):
+        for p in self.params():
+            p.data += h*self.state[p]['v']
+
     @torch.no_grad()
     def step(self, closure):
-        """Performs a single optimization step.
-
-        Args:
-            closure (callable, optional): A closure that reevaluates the model
-                and returns the loss.
-        """
         self.closure = closure
-        # print(f"Step {self.state['step']}. Starting optimization.")
-        h = self.state['lr']
-        (base_mean_loss, base_mean_sqr_loss, base_examples) = self.update() # computes loss and grad and updates statistics at current param
+        (base_mean_loss, base_mean_sqr_loss, base_examples) = self.update()
         self.compute_search_direction()
-        self.move(h)
+        self.move(self.state['lr'])
         self.state['step'] += 1
         return (base_mean_loss, base_mean_sqr_loss, base_examples)
-
-    def tune(self, closure):
-        pass
