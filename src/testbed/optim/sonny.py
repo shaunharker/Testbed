@@ -64,9 +64,10 @@ class Sonny(Optimizer):
         for (idx, p) in enumerate(self.params()):
             zeros = lambda : torch.zeros_like(p, memory_format=torch.preserve_format)
             self.state[idx]={'ema_grad': EMA(self.state['beta1'], zeros()),
-                                  'ema_sqr_grad': EMA(self.state['beta2'], zeros())}
+                             'ema_sqr_grad': EMA(self.state['beta2'], zeros())}
             self.state['stats'][idx]={'sum_grad': zeros(),
-                                           'sum_sqr_grad': zeros()}
+                                      'sum_sqr_grad': zeros(),
+                                      'count': 0}
 
     def update(self):
         with torch.enable_grad():
@@ -79,6 +80,7 @@ class Sonny(Optimizer):
             self.state[idx]['ema_sqr_grad'].step(p.grad.data**2)
             self.state['stats'][idx]['sum_grad'] += p.grad.data
             self.state['stats'][idx]['sum_sqr_grad'] += p.grad.data**2
+            self.state['stats'][idx]['count'] += 1
         return (mean_loss, mean_sqr_loss, examples)
 
     def compute_search_direction(self):
