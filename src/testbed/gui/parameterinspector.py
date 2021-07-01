@@ -39,11 +39,14 @@ class ParameterInspector:
             var = 0
         return (weight, mean, var)
 
-    def data(self):
-        weight = np.concatenate([self.param[i].view(-1).cpu().numpy() for i in range(len(self.param))]).reshape(-1)
-        sum_grad = np.concatenate([self.data[i]['sum_grad'].view(-1).cpu() for i in range(len(self.param))]).reshape(-1)
-        sum_sqr_grad = np.concatenate([self.data[i]['sum_sqr_grad'].view(-1).cpu() for i in range(len(self.param))]).reshape(-1)
-        count = self.data[0]['count']
-        mean = sum_grad / count
-        var = (count / (count-1))*((sum_sqr_grad / count) - mean**2)
-        return np.concatenate([weight.reshape(1,-1), mean.reshape(1,-1), var.reshape(1,-1)])
+    def numpy(self):
+        if len(self.data) > 0:
+            weight = np.concatenate([self.param[i].view(-1).cpu().numpy() for i in range(len(self.param))]).reshape(-1)
+            sum_grad = np.concatenate([self.data[i]['sum_grad'].view(-1).cpu() for i in range(len(self.param))]).reshape(-1)
+            sum_sqr_grad = np.concatenate([self.data[i]['sum_sqr_grad'].view(-1).cpu() for i in range(len(self.param))]).reshape(-1)
+            count = self.data[0]['count']
+            mean = sum_grad / count
+            var = (count / (count-1))*((sum_sqr_grad / count) - mean**2)
+            return np.concatenate([weight.reshape(1,-1), mean.reshape(1,-1), var.reshape(1,-1)])
+        else:
+            raise RuntimeError("No data.")

@@ -3,8 +3,6 @@ from .delaykeyboardinterrupt import DelayKeyboardInterrupt
 from .ignorekeyboardinterrupt import IgnoreKeyboardInterrupt
 from .reporter import Reporter
 from .stopwatch import Stopwatch
-from .plot import Plot
-from .parameterinspector import ParameterInspector
 
 def decode_broken_utf8(s):
     def charsize(b):

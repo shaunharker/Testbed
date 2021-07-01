@@ -1,7 +1,6 @@
-from bokeh.io import push_notebook, show, output_notebook
+from bokeh.io import push_notebook, show
 from bokeh.models import HoverTool, ColumnDataSource
 from bokeh.plotting import figure
-output_notebook()
 import time, math
 import numpy as np
 
