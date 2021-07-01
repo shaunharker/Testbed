@@ -3,7 +3,7 @@ from torch.nn import Module, Embedding, Conv1d, Linear, Softmax, CrossEntropyLos
 
 class Net1(Module):
     def __init__(self, H, L, K=8, C=256):
-        super(Net1, self).__init__()
+        super().__init__()
         self.C = C # number of classes
         self.K = K # dimension of token embedding
         self.L = L # context window length

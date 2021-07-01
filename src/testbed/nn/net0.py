@@ -8,7 +8,7 @@ class Net0(Module):
                  context_length=64,
                  num_hidden=256,
                  num_output_classes=256):
-        super(Net0, self).__init__()
+        super().__init__()
         self.num_input_classes = num_input_classes # number of classes
         self.embedding_dim = embedding_dim # dimension of token embedding
         self.context_length = context_length # context window length

@@ -1,15 +1,19 @@
-from bokeh.io import push_notebook, show
-from bokeh.models import HoverTool, ColumnDataSource
-from bokeh.plotting import figure
 import time, math
 import numpy as np
+from .plot import Plot
 
-class Histogram:
-    def __init__(self, data, bins=100, range=None, title='Histogram'):
+class Histogram(Plot):
+    def __init__(self, data=None, bins=100, range=None, title='Histogram'):
+        super().__init__()
+        self.bokeh["figure"].y_range.start = 0
+        self.bokeh["figure"].grid.grid_line_color="white"
+        self.add_histogram(data,bins=bins,range=range)
+
+    def add_histogram(self, data, bins=100, range=None):
+        if data is None:
+            return
         hist, edges = np.histogram(data, density=True, bins=bins, range=range)
-        p = figure(title=title, tools='', background_fill_color="#fafafa")
-        p.quad(top=hist, bottom=0, left=edges[:-1], right=edges[1:],
-               fill_color="navy", line_color="white", alpha=0.5)
-        p.y_range.start = 0
-        p.grid.grid_line_color="white"
-        show(p)
+        self.count += 1
+        self.bokeh["histogram_"+str(self.count)] = (self.bokeh["figure"].quad(
+            top=hist, bottom=0, left=edges[:-1], right=edges[1:],
+            fill_color=["red","navy","green","orange"][self.count%4], line_color="white", alpha=0.5))
