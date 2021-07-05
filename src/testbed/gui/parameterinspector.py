@@ -39,6 +39,9 @@ class ParameterInspector:
             var = 0
         return (weight, mean, var)
 
+    def param_group(self, gidx):
+        return self.param[gidx]
+
     def numpy(self):
         if len(self.data) > 0:
             weight = np.concatenate([self.param[i].view(-1).cpu().numpy() for i in range(len(self.param))]).reshape(-1)

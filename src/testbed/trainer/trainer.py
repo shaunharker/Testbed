@@ -14,16 +14,12 @@ class Trainer:
                  batch_size=32, # initial batch size
                  OptimizerType=None,
                  dataset=None):
-        self.model = model.to(device='cuda')
+
         self.example_length = example_length
         self.batch_size = batch_size
         if OptimizerType is None:
             OptimizerType = torch.optim.AdamW
         self.OptimizerType = OptimizerType
-        if dataset is None:
-            self.dataset = TextDataset(example_length=example_length)
-        else:
-            self.dataset = dataset
         self.inbox = Queue()
         self.outbox = Queue()
         self.loss_inbox = Queue()
@@ -31,7 +27,17 @@ class Trainer:
         self.paused = None
         self.step = 0
         self.compute_time = 0.0
+        self.compute_energy = 0.0
         self.losses = []
+        if dataset is None:
+            self.dataset = TextDataset(example_length=example_length)
+        else:
+            self.dataset = dataset
+        if model is not None:
+            if type(model) is str:
+                self.load(model)
+            else:
+                self.model = model.to(device='cuda')
 
     def set_batch_size(self, batch_size):
         if self.running == True:
@@ -48,6 +54,7 @@ class Trainer:
             if self.paused == False:
                 self.outbox.put("start")
         self.example_length = example_length
+        self.dataset.set_example_length(example_length)
 
     def set_optimizer_settings(self, **settings):
         if self.running == True:
@@ -73,12 +80,15 @@ class Trainer:
             self.process = Worker(self.outbox, self.inbox, self.loss_inbox)
             self.process.start()
             ready = self.inbox.get() # Wait for ready.
+            # the problem with the following is that one needs to memorize the order
+            # uselessly. Instead, use a dictionary. TODO
             self.outbox.put(self.model)
             self.outbox.put(self.example_length)
             self.outbox.put(self.batch_size)
             self.outbox.put(self.OptimizerType)
             self.outbox.put(self.dataset)
             self.outbox.put(self.compute_time)
+            self.outbox.put(self.compute_energy)
             self.outbox.put(self.step)
             self.outbox.put(self.losses)
             self.running = True
@@ -86,16 +96,17 @@ class Trainer:
         self.running = True
         self.paused = False
 
-    def update_losses(self):
+    def update(self):
         while True:
             try:
                 item = self.loss_inbox.get(False)
-                self.step = item[0]
-                self.compute_time = item[1]
+                # these three things need to be updated to checkpoint properly
+                self.step = item['step']
+                self.compute_time = item['compute_time']
+                self.compute_energy = item['compute_energy']
             except:
                 break
             self.losses.append(item)
-        return self.losses
 
     def pause(self):
         """
@@ -105,7 +116,7 @@ class Trainer:
             self.outbox.put("pause")
             self.paused = True
             self.inbox.get()
-        self.update_losses()
+        self.update()
 
     def stop(self):
         self.pause() # to get self.step and self.compute_time
@@ -120,7 +131,11 @@ class Trainer:
         if path is None:
             path = "checkpoint.pt"
         checkpoint = torch.load(path)
-        self.compute_time = checkpoint["time"]
+        self.compute_time = checkpoint["compute_time"]
+        try:
+            self.compute_energy = checkpoint["compute_energy"]
+        except:
+            self.compute_energy = 0.0
         self.step = checkpoint["step"]
         self.losses = checkpoint["losses"]
         self.model = checkpoint["model"].to(device='cuda')
@@ -148,6 +163,7 @@ class Trainer:
         was_paused = self.paused
         self.pause()
         L = self.example_length - 1  # CODE SMELL (refactor net0 to not compute own loss, refactor closure to reflect new case, etc.)
+        #print(L, self.example_length)
         self.model.eval()
         prompt = [b for b in bytes(self.dataset.random_text_snippet() + prompt, 'utf-8')][-L:]
         completion = []
@@ -156,6 +172,7 @@ class Trainer:
             x = (torch.tensor(tail)
                       .unsqueeze(0)
                       .to(default_device())) # shape [1,L]
+            #print(x.shape)
             P = self.model.probs(x).view(-1)
             prob_dist = torch.distributions.Categorical(P)
             c_ord = prob_dist.sample().item()

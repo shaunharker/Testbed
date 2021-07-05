@@ -1,5 +1,6 @@
 import torch
 from torch.nn import Module, Embedding, Conv1d, Linear, Softmax, CrossEntropyLoss
+import math
 
 class Net1(Module):
     def __init__(self, H, L, K=8, C=256):
@@ -38,7 +39,7 @@ class Net1(Module):
         x = self.layer1(x) # x.shape == [B, N-L, C]
         x = x.view(-1, self.C) # x.shape = [B*(N-L), C]
         y = y.reshape(-1) # y.shape == [B*(N-L)]
-        return self.criterion(x, y)
+        return self.criterion(x, y)/math.log(2)
 
     def probs(self, X): # X.shape == [B, N]
         """

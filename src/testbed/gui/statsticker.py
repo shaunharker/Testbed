@@ -7,35 +7,33 @@ import numpy as np
 from threading import Thread, Lock
 
 class StatsTicker:
-    def __init__(self, trainer):
+    def __init__(self, trainer, x='compute_time', y='mean_loss', kind='line'):
         self.trainer = trainer
         self.tick = 0
-        self.losses = self.trainer.update_losses()
+        self.losses = []
         self.bokeh = {}
         self.bokeh_handle = None
         self.updating = False
+        self.kind = kind
+        self.x = x
+        self.y = y
+
+    def __repr__(self):
         self.display()
-        
-    def recent_stats(self):
-        self.losses = self.trainer.update_losses()
-        data = {'time' : [ x[1] for x in self.losses[self.tick:]],
-                'mean_loss' : [8*x[2]/math.log(256) for x in self.losses[self.tick:]]}
-        #print(data)
-        return data
+        return ""
 
     def display(self, updates=True):
         TOOLS="pan,wheel_zoom,box_zoom,reset"
         self.bokeh["figure"] = figure(tools=TOOLS)
         self.bokeh["figure"].axis.major_label_text_font_size = "24px"
-        hover = HoverTool(show_arrow=False,
-                          mode='vline',
-                          line_policy='next',
-                          tooltips=[('X_value', '$data_x'),
-                                    ('Y_value', '$data_y')])
-        self.bokeh["figure"].add_tools(hover)
-        data = self.recent_stats()
-        self.bokeh["mean_loss"] = self.bokeh["figure"].line(data['time'],data['mean_loss'])
-        self.tick = len(self.losses)
+        self.trainer.update()
+        self.losses = self.trainer.losses
+        self.tick = 0
+        data = {self.x : [], self.y : []}
+        if self.kind == 'line':
+            self.bokeh["data"] = self.bokeh["figure"].line(data[self.x],data[self.y])
+        else:
+            self.bokeh["data"] = self.bokeh["figure"].circle(data[self.x],data[self.y])
         self.bokeh_handle = show(self.bokeh["figure"], notebook_handle=True)
         if updates:
             self.start()
@@ -51,12 +49,19 @@ class StatsTicker:
             self.updating = False
             self.updater.join()
 
+    def data_tail(self, tick=0):
+        data = {self.x : [ item[self.x] for item in self.losses[tick:]],
+                self.y : [ item[self.y] for item in self.losses[tick:]]}
+        return data
+
     def _update_loop(self):
         while self.updating:
             time.sleep(1)
-            data = self.recent_stats()
-            if len(self.losses) > self.tick:
-                self.bokeh["mean_loss"].data_source.stream({'x':data['time'],
-                                                            'y':data['mean_loss']})
+            self.trainer.update()
+            self.losses = self.trainer.losses
+            data = self.data_tail(self.tick)
+            if len(data) > 0:
+                self.bokeh["data"].data_source.stream({'x':data[self.x],
+                                                       'y':data[self.y]})
                 self.tick = len(self.losses)
             push_notebook(handle=self.bokeh_handle)

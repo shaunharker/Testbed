@@ -9,8 +9,7 @@ import testbed.util
 
 from testbed.data import TextDataset
 from testbed.data import Loader
-from testbed.nn import Net0
-from testbed.nn import Net1
+from testbed.nn import Net0, Net1, Net2, Net3, Net4
 from testbed.nn import Transformer
 from testbed.trainer import Trainer
 from testbed.gui import Plot
