@@ -172,7 +172,6 @@ class Worker(ctx.Process):
     def set_example_length(self, example_length):
         self.example_length = example_length
         print(f"{self.step}. Setting example length.")
-        self.example_length = self.inbox.get()
         self.dataset.set_example_length(self.example_length)
         print(f"{self.step}. The example length is now {self.example_length}.")
 
