@@ -29,23 +29,34 @@ class Client:
         return instance_types()
 
     # Instances. See https://developers.genesiscloud.com/instances
-    def create_instance(self, instance_json):
+    def create_instance(self, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#create-an-instance
         """
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+
         return self.api(verb=POST,
                         expected_status_code=201,
                         endpoint="https://api.genesiscloud.com/compute/v1/instance",
-                        json=instance_json)
+                        body_parameters=body_parameters)
 
-    def list_all_instances(self, per_page=50, page=1):
+    def list_all_instances(self, query_parameters=None, **kwargs): #per_page=50, page=1):
         """
         https://developers.genesiscloud.com/instances#list-all-instances
         """
+        query_parameters = self.parse_args(query_parameters, **kwargs)
+
+        try:
+            for key in query_parameters:
+                assert key in ["per_page", "page"]
+        except AssertionError:
+            raise ValueError(f"Invalid arguments: {kwargs}\n"
+                              "Please see https://developers.genesiscloud.com/instances#list-all-instances")
+
         return self.api(verb=GET,
                         expected_status_code=200,
                         endpoint="https://api.genesiscloud.com/compute/v1/instances",
-                        params={'per_page': per_page, 'page': page})
+                        query_parameters=query_parameters)
 
     def get_instance(self, instance_id):
         """
@@ -53,15 +64,13 @@ class Client:
         """
         return self.api(verb=GET,
                         expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}"
-                        )
+                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}")
 
     def destroy_an_instance(self, instance_id):
         """
         https://developers.genesiscloud.com/instances#destroy-an-instance
         """
         # TODO: Consider an asynchronous version.
-
         # Refuse to destroy while instance is in "copying" state.
         while self.get_instance(instance_id)["status"] == "copying":
             time.sleep(1.0)
@@ -69,14 +78,21 @@ class Client:
                         expected_status_code=204,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}")
 
-    def snapshot_an_instance(self, instance_id, snapshot_name):
+    def snapshot_an_instance(self, instance_id, body_parameters, **kwargs): #snapshot_name):
         """
         https://developers.genesiscloud.com/instances#snapshot-an-instance
         """
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+        try:
+            for key in body_parameters:
+                assert key in ["name"]
+        except AssertionError:
+            raise ValueError(f"Invalid body parameter {key}\n"
+                              "Please see https://developers.genesiscloud.com/instances#snapshot-an-instance")
         return self.api(verb=POST,
                         expected_status_code=201,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/snapshots",
-                        json={"name": snapshot_name})
+                        body_parameters=body_parameters)
 
     def list_snapshots_of_an_instance(self, instance_id):
         """
@@ -85,35 +101,40 @@ class Client:
 
         return self.api(verb=GET,
                         expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/snapshots",
-                        )
+                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/snapshots")
 
-    def attachdetach_security_groups_from_an_instance(self, instance_id, security_groups_json):
+    def attachdetach_security_groups_from_an_instance(self, instance_id, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#attachdetach-security-groups-from-an-instance
         """
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+
         return self.api(verb=PATCH,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
-                        json=security_groups_json)
+                        body_parameters=body_parameters)
 
-    def attachdetach_volumes_from_an_instance(self, instance_id, volumes_json):
+    def attachdetach_volumes_from_an_instance(self, instance_id, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#attachdetach-volumes-from-an-instance
         """
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+
         return self.api(verb=PATCH,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
-                        json=volumes_json)
+                        body_parameters=body_parameters)
 
-    def update_an_instance(self, instance_id, instance_json):
+    def update_an_instance(self, instance_id, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#update-an-instance
         """
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+
         return self.api(verb=PATCH,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
-                        json=instance_json)
+                        body_parameters=body_parameters)
 
     def get_instance_actions(self, instance_id):
         """
@@ -121,54 +142,58 @@ class Client:
         """
         return self.api(verb=GET,
                         expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/actions",
-                        )
+                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/actions")
 
-    def perform_action(self, instance_id, action_json):
+    def perform_action(self, instance_id, body_parameters=None, **kwarg):
         """
         https://developers.genesiscloud.com/instances#perform-action
         """
-        if type(action_json) is str:
-            action_json = {"action": action}
-        assert action_json["action"] in ["stop", "start", "reset"]
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+        action = body_parameters["action"]
+        assert action in ["stop", "start", "reset"]
+
         return self.api(verb=POST,
                         expected_status_code=204,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/actions",
-                        json=action_json)
+                        body_parameters=body_parameters)
 
     # Images. See https://developers.genesiscloud.com/images
-    def list_images(self, **kwargs):
+    def list_images(self, query_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/images#list-images
         """
+        query_parameters = self.parse_args(query_parameters, **kwargs)
+
         try:
-            for key in kwargs:
+            for key in query_parameters:
                 assert key in ["type", "per_page", "page"]
                 if key == "type":
-                    assert kwargs["type"] in ["base-os", "preconfigured", "snapshot"]
+                    assert query_parameters["type"] in ["base-os", "preconfigured", "snapshot"]
         except AssertionError:
             raise ValueError(f"Invalid arguments: {kwargs}\n"
-                              "Please see [https://developers.genesiscloud.com/images#list-images].")
+                              "Please see https://developers.genesiscloud.com/images#list-images")
         return self.api(verb=GET,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/images",
-                        params=kwargs)
+                        query_parameters=query_parameters)
 
     # Snapshots. https://developers.genesiscloud.com/snapshots
-    def list_snapshots(self, **kwargs):
+    def list_snapshots(self, query_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/snapshots#list-snapshots
         """
+        query_parameters = self.parse_args(query_parameters, **kwargs)
+
         try:
-            for key in kwargs:
+            for key in query_parameters:
                 assert key in ["per_page", "page"]
         except AssertionError:
-            raise ValueError(f"Invalid arguments: {kwargs}\n"
-                              "Please see [https://developers.genesiscloud.com/snapshots#list-snapshots].")
+            raise ValueError(f"Invalid arguments: {query_parameters}\n"
+                              "Please see https://developers.genesiscloud.com/snapshots#list-snapshots")
         return self.api(verb=GET,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/snapshots",
-                        params=kwargs)
+                        query_parameters=query_parameters)
 
     def get_snapshot(self, snapshot_id):
         """
@@ -187,14 +212,16 @@ class Client:
                         endpoint=f"https://api.genesiscloud.com/compute/v1/snapshots/{snapshot_id}")
 
     # Volumes. See https://developers.genesiscloud.com/volumes
-    def create_a_volume(self, volume_json):
+    def create_a_volume(self, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/volumes#create-a-volume
         """
+        body_parameters = self.parse_args(query_parameters, **kwargs)
+
         return self.api(verb=POST,
                         expected_status_code=201,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/volumes",
-                        json=volume_json)
+                        body_parameters=body_parameters)
 
     def list_volumes(self, query_parameters=None, **kwargs):
         """
@@ -206,13 +233,13 @@ class Client:
             for key in query_parameters:
                 assert key in ["per_page", "page"]
         except AssertionError:
-            raise ValueError(f"Invalid arguments: {kwargs}.\n"
-                              "Please see [https://developers.genesiscloud.com/volumes#list-volumes].")
+            raise ValueError(f"Invalid arguments: {kwargs}\n"
+                              "Please see https://developers.genesiscloud.com/volumes#list-volumes")
 
         return self.api(verb=GET,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/volumes",
-                        params=query_parameters)
+                        query_parameters=query_parameters)
 
     def get_volume(self, volume_id):
         """
@@ -241,41 +268,51 @@ class Client:
             for key in query_parameters:
                 assert key in ["per_page", "page"]
         except AssertionError:
-            raise ValueError(f"Invalid arguments: {query_parameters}.\n"
-                              "Please see [https://developers.genesiscloud.com/ssh-keys].")
+            raise ValueError(f"Invalid arguments: {query_parameters}\n"
+                              "Please see https://developers.genesiscloud.com/ssh-keys")
 
         return self.api(verb=GET,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/ssh-keys",
-                        params=query_parameters)
+                        query_parameters=query_parameters)
 
     # Security Groups. See https://developers.genesiscloud.com/security-groups
-    def create_security_groups(self, security_groups_json):
+    def create_security_groups(self, body_parameters, **kwargs):
         """
         https://developers.genesiscloud.com/security-groups#create-security-groups
         """
+        body_parameters = self.parse_args(body_parameters, **kwargs)
         return self.api(verb=POST,
                         expected_status_code=201,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
-                        json=security_groups_json)
+                        body_parameters=body_parameters)
 
-    def update_security_groups(self, security_groups_update_json):
+    def update_security_groups(self, body_parameters, **kwargs):
         """
         https://developers.genesiscloud.com/security-groups#update-security-groups
         """
+        body_parameters = self.parse_args(body_parameters, **kwargs)
         return self.api(verb=PUT,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
-                        json=security_groups_update_json)
+                        body_parameters=body_parameters)
 
-    def list_security_groups(self, params=None):
+    def list_security_groups(self, query_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/security-groups#list-security-groups
         """
+        query_parameters = self.parse_args(query_parameters, **kwargs)
+        try:
+            for key in query_parameters:
+                assert key in ["per_page", "page"]
+        except AssertionError:
+            raise ValueError(f"Invalid arguments: {query_parameters}\n"
+                              "Please see https://developers.genesiscloud.com/security-groups#list-security-groups")
+
         return self.api(verb=GET,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
-                        params=params)
+                        query_parameters=query_parameters)
 
     def get_security_group(self, security_group_id):
         """
@@ -289,7 +326,9 @@ class Client:
         """
         https://developers.genesiscloud.com/security-groups#delete-a-security-group
         """
-        return self.api(verb=DELETE, expected_status_code=204, endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups/{security_group_id}")
+        return self.api(verb=DELETE,
+                        expected_status_code=204,
+                        endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups/{security_group_id}")
 
     def parse_args(self, parameters=None, **kwargs):
         if parameters is None:
@@ -299,7 +338,7 @@ class Client:
                 parameters[key] = kwargs[key]
         return parameters
 
-    def api(self, verb, expected_status_code, endpoint, params=None, json=None):
+    def api(self, verb, expected_status_code, endpoint, query_parameters=None, body_parameters=None):
         """
         Call used by the other methods to interact with api.genesiscloud.com
         """
@@ -317,8 +356,8 @@ class Client:
         response = verb(
             f"https://api.genesiscloud.com/compute/v1/{endpoint}",
             headers=self.headers,
-            params=params,
-            json=json,
+            params=query_parameters,
+            json=body_parameters,
         )
         if response.status_code != expected_status_code:
             print(response.status_code)
