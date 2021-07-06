@@ -16,6 +16,7 @@ import time
 import os
 from requests import get as GET, post as POST, put as PUT, patch as PATCH, delete as DELETE
 
+
 class Client:
     def __init__(self):
         # Go to https://account.genesiscloud.com/dashboard/security
@@ -34,37 +35,37 @@ class Client:
         https://developers.genesiscloud.com/instances#create-an-instance
         """
         body_parameters = self.parse_args(body_parameters, **kwargs)
+        assert_that(body_parameters, is_a_create_instance_body)
+        response = self.api(verb=POST,
+                            expected_status_code=201,
+                            endpoint="https://api.genesiscloud.com/compute/v1/instance",
+                            body_parameters=body_parameters)
+        assert_that(response, is_a_create_instance_response)
+        return response
 
-        return self.api(verb=POST,
-                        expected_status_code=201,
-                        endpoint="https://api.genesiscloud.com/compute/v1/instance",
-                        body_parameters=body_parameters)
-
-    def list_all_instances(self, query_parameters=None, **kwargs): #per_page=50, page=1):
+    def list_all_instances(self, query_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#list-all-instances
         """
         query_parameters = self.parse_args(query_parameters, **kwargs)
-
-        try:
-            for key in query_parameters:
-                assert key in ["per_page", "page"]
-        except AssertionError:
-            raise ValueError(f"Invalid arguments: {kwargs}\n"
-                              "Please see https://developers.genesiscloud.com/instances#list-all-instances")
-
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint="https://api.genesiscloud.com/compute/v1/instances",
-                        query_parameters=query_parameters)
+        assert_that(query_parameters, is_a_list_all_instances_query)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint="https://api.genesiscloud.com/compute/v1/instances",
+                            query_parameters=query_parameters)
+        assert_that(response, is_a_list_all_instances_response)
+        return response
 
     def get_instance(self, instance_id):
         """
         https://developers.genesiscloud.com/instances#get-instance
         """
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}")
+        assert_that(instance_id, is_a_string())
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}")
+        assert_that(response, is_a_get_instance_response)
+        return response
 
     def destroy_an_instance(self, instance_id):
         """
@@ -72,6 +73,7 @@ class Client:
         """
         # TODO: Consider an asynchronous version.
         # Refuse to destroy while instance is in "copying" state.
+        assert_that(instance_id, is_an_instance_id())
         while self.get_instance(instance_id)["status"] == "copying":
             time.sleep(1.0)
         return self.api(verb=DELETE,
@@ -82,80 +84,92 @@ class Client:
         """
         https://developers.genesiscloud.com/instances#snapshot-an-instance
         """
+        assert_that(instance_id, is_an_instance_id())
         body_parameters = self.parse_args(body_parameters, **kwargs)
-        try:
-            for key in body_parameters:
-                assert key in ["name"]
-        except AssertionError:
-            raise ValueError(f"Invalid body parameter {key}\n"
-                              "Please see https://developers.genesiscloud.com/instances#snapshot-an-instance")
-        return self.api(verb=POST,
-                        expected_status_code=201,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/snapshots",
-                        body_parameters=body_parameters)
+        assert_that(body_parameters, is_a_snapshot_an_instance_body)
+        response = self.api(verb=POST,
+                            expected_status_code=201,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/snapshots",
+                            body_parameters=body_parameters)
+        assert_that(response, is_a_snapshot_an_instance_response)
+        return response
 
     def list_snapshots_of_an_instance(self, instance_id):
         """
         https://developers.genesiscloud.com/instances#list-snapshots-of-an-instance
         """
-
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/snapshots")
+        assert_that(instance_id, is_an_instance_id()))
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/snapshots")
+        assert_that(response, is_a_list_snapshots_of_an_instance_response)
+        return response
 
     def attachdetach_security_groups_from_an_instance(self, instance_id, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#attachdetach-security-groups-from-an-instance
         """
+        assert_that(instance_id, is_an_instance_id())
         body_parameters = self.parse_args(body_parameters, **kwargs)
-
-        return self.api(verb=PATCH,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
-                        body_parameters=body_parameters)
+        assert_that(body_parameters, is_an_attachdetach_security_groups_from_an_instance_body)
+        response = self.api(verb=PATCH,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
+                            body_parameters=body_parameters)
+        assert_that(response, is_an_attachdetach_security_groups_from_an_instance_response)
+        return response
 
     def attachdetach_volumes_from_an_instance(self, instance_id, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#attachdetach-volumes-from-an-instance
         """
+        assert_that(instance_id, is_an_instance_id())
         body_parameters = self.parse_args(body_parameters, **kwargs)
-
-        return self.api(verb=PATCH,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
-                        body_parameters=body_parameters)
+        assert_that(body_parameters, is_an_attachdetach_volumes_from_an_instance_body)
+        response = self.api(verb=PATCH,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
+                            body_parameters=body_parameters)
+        assert_that(response, is_an_attachdetach_volumes_from_an_instance_response)
+        return response
 
     def update_an_instance(self, instance_id, body_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/instances#update-an-instance
         """
+        assert_that(instance_id, is_an_instance_id())
         body_parameters = self.parse_args(body_parameters, **kwargs)
-
-        return self.api(verb=PATCH,
+        assert_that(body_parameters, is_a_update_an_instance_body)
+        response = self.api(verb=PATCH,
                         expected_status_code=200,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}",
                         body_parameters=body_parameters)
+        assert_that(response, is_an_update_an_instance_response)
+        return response
 
     def get_instance_actions(self, instance_id):
         """
         https://developers.genesiscloud.com/instances#get-instance-actions
         """
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/actions")
-
+        assert_that(instance_id, is_an_instance_id())
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/actions")
+        assert_that(response, is_a_get_instance_actions_response)
     def perform_action(self, instance_id, body_parameters=None, **kwarg):
         """
         https://developers.genesiscloud.com/instances#perform-action
         """
-        body_parameters = self.parse_args(body_parameters, **kwargs)
-        action = body_parameters["action"]
-        assert action in ["stop", "start", "reset"]
+        assert_that(instance_id, is_an_instance_id())
 
-        return self.api(verb=POST,
-                        expected_status_code=204,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/actions",
-                        body_parameters=body_parameters)
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+        assert_that(body_parameters, is_a_perform_action_body)
+        response = self.api(verb=POST,
+                            expected_status_code=204,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/instances/{instance_id}/actions",
+                            body_parameters=body_parameters)
+        assert_that(response, is_a_perform_action_response)
+        return response
 
     # Images. See https://developers.genesiscloud.com/images
     def list_images(self, query_parameters=None, **kwargs):
@@ -163,19 +177,13 @@ class Client:
         https://developers.genesiscloud.com/images#list-images
         """
         query_parameters = self.parse_args(query_parameters, **kwargs)
-
-        try:
-            for key in query_parameters:
-                assert key in ["type", "per_page", "page"]
-                if key == "type":
-                    assert query_parameters["type"] in ["base-os", "preconfigured", "snapshot"]
-        except AssertionError:
-            raise ValueError(f"Invalid arguments: {kwargs}\n"
-                              "Please see https://developers.genesiscloud.com/images#list-images")
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/images",
-                        query_parameters=query_parameters)
+        assert_that(query_parameters, is_a_list_images_query)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/images",
+                            query_parameters=query_parameters)
+        assert_that(response, is_a_list_images_response)
+        return response
 
     # Snapshots. https://developers.genesiscloud.com/snapshots
     def list_snapshots(self, query_parameters=None, **kwargs):
@@ -183,30 +191,30 @@ class Client:
         https://developers.genesiscloud.com/snapshots#list-snapshots
         """
         query_parameters = self.parse_args(query_parameters, **kwargs)
-
-        try:
-            for key in query_parameters:
-                assert key in ["per_page", "page"]
-        except AssertionError:
-            raise ValueError(f"Invalid arguments: {query_parameters}\n"
-                              "Please see https://developers.genesiscloud.com/snapshots#list-snapshots")
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/snapshots",
-                        query_parameters=query_parameters)
+        assert_that(query_parameters, is_a_list_snapshots_query)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/snapshots",
+                            query_parameters=query_parameters)
+        assert_that(response, is_a_list_snapshots_response)
+        return response
 
     def get_snapshot(self, snapshot_id):
         """
         https://developers.genesiscloud.com/snapshots#get-snapshot
         """
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/snapshots/{snapshot_id}")
+        assert_that(instance_id, is_a_snapshot_id())
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/snapshots/{snapshot_id}")
+        assert_that(response, is_a_get_snapshot_response)
+        return response
 
     def delete_a_snapshot(self, snapshot_id):
         """
         https://developers.genesiscloud.com/snapshots#delete-a-snapshot
         """
+        assert_that(instance_id, is_a_snapshot_id())
         return self.api(verb=DELETE,
                         expected_status_code=204,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/snapshots/{snapshot_id}")
@@ -216,47 +224,49 @@ class Client:
         """
         https://developers.genesiscloud.com/volumes#create-a-volume
         """
-        body_parameters = self.parse_args(query_parameters, **kwargs)
-
-        return self.api(verb=POST,
-                        expected_status_code=201,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/volumes",
-                        body_parameters=body_parameters)
+        body_parameters = self.parse_args(body_parameters, **kwargs)
+        assert_that(body_parameters, is_a_create_a_volume_body)
+        response = self.api(verb=POST,
+                            expected_status_code=201,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/volumes",
+                            body_parameters=body_parameters)
+        assert_that(response, is_a_create_a_volume_response)
+        return response
 
     def list_volumes(self, query_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/volumes#list-volumes
         """
         query_parameters = self.parse_args(query_parameters, **kwargs)
-
-        try:
-            for key in query_parameters:
-                assert key in ["per_page", "page"]
-        except AssertionError:
-            raise ValueError(f"Invalid arguments: {kwargs}\n"
-                              "Please see https://developers.genesiscloud.com/volumes#list-volumes")
-
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/volumes",
-                        query_parameters=query_parameters)
+        assert_that(query_parameters, is_a_list_volumes_query)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/volumes",
+                            query_parameters=query_parameters)
+        assert_that(response, is_a_list_volumes_response)
+        return response
 
     def get_volume(self, volume_id):
         """
         https://developers.genesiscloud.com/volumes#get-volume
         """
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/volumes/{volume_id}")
+        assert_that(volume_id, is_a_volume_id)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/volumes/{volume_id}")
+        assert_that(response, is_a_get_volume_response)
+        return response
 
     def delete_a_volume(self, volume_id):
         """
         https://developers.genesiscloud.com/volumes#delete-a-volume
         """
-        return self.api(verb=DELETE,
-                        expected_status_code=204,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/volumes/{volume_id}")
-
+        assert_that(volume_id, is_a_volume_id)
+        response = self.api(verb=DELETE,
+                            expected_status_code=204,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/volumes/{volume_id}")
+        assert_that(response, is_a_delete_a_volume_response)
+        return response
 
     # SSH Keys. See https://developers.genesiscloud.com/ssh-keys
     def list_ssh_keys(self, query_parameters=None, **kwargs):
@@ -264,17 +274,13 @@ class Client:
         https://developers.genesiscloud.com/ssh-keys#list-ssh-keys
         """
         query_parameters = self.parse_args(query_parameters, **kwargs)
-        try:
-            for key in query_parameters:
-                assert key in ["per_page", "page"]
-        except AssertionError:
-            raise ValueError(f"Invalid arguments: {query_parameters}\n"
-                              "Please see https://developers.genesiscloud.com/ssh-keys")
-
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/ssh-keys",
-                        query_parameters=query_parameters)
+        assert_that(query_parameters, is_a_list_ssh_keys_query)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/ssh-keys",
+                            query_parameters=query_parameters)
+        assert_that(response, is_a_list_ssh_keys_response)
+        return response
 
     # Security Groups. See https://developers.genesiscloud.com/security-groups
     def create_security_groups(self, body_parameters, **kwargs):
@@ -282,50 +288,56 @@ class Client:
         https://developers.genesiscloud.com/security-groups#create-security-groups
         """
         body_parameters = self.parse_args(body_parameters, **kwargs)
-        return self.api(verb=POST,
-                        expected_status_code=201,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
-                        body_parameters=body_parameters)
+        assert_that(body_parameters, is_a_create_security_groups_body)
+        response = self.api(verb=POST,
+                            expected_status_code=201,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
+                            body_parameters=body_parameters)
+        assert_that(response, is_a_create_security_groups_response)
+        return response
 
     def update_security_groups(self, body_parameters, **kwargs):
         """
         https://developers.genesiscloud.com/security-groups#update-security-groups
         """
         body_parameters = self.parse_args(body_parameters, **kwargs)
-        return self.api(verb=PUT,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
-                        body_parameters=body_parameters)
+        assert_that(body_parameters, is_an_update_security_groups_body)
+        response = self.api(verb=PUT,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
+                            body_parameters=body_parameters)
+        assert_that(response, is_an_update_security_groups)
+        return response
 
     def list_security_groups(self, query_parameters=None, **kwargs):
         """
         https://developers.genesiscloud.com/security-groups#list-security-groups
         """
         query_parameters = self.parse_args(query_parameters, **kwargs)
-        try:
-            for key in query_parameters:
-                assert key in ["per_page", "page"]
-        except AssertionError:
-            raise ValueError(f"Invalid arguments: {query_parameters}\n"
-                              "Please see https://developers.genesiscloud.com/security-groups#list-security-groups")
-
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
-                        query_parameters=query_parameters)
+        assert_that(query_parameters, is_a_list_security_groups_query)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups",
+                            query_parameters=query_parameters)
+        assert_that(response, is_a_list_security_groups_response)
+        return response
 
     def get_security_group(self, security_group_id):
         """
         https://developers.genesiscloud.com/security-groups#get-security-group
         """
-        return self.api(verb=GET,
-                        expected_status_code=200,
-                        endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups/{security_group_id}")
+        assert_that(security_group_id, is_a_security_group_id)
+        response = self.api(verb=GET,
+                            expected_status_code=200,
+                            endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups/{security_group_id}")
+        assert_that(response, is_a_get_security_group_response)
+        return response
 
     def delete_a_security_group(self, security_group_id):
         """
         https://developers.genesiscloud.com/security-groups#delete-a-security-group
         """
+        assert_that(security_group_id, is_a_security_group_id)
         return self.api(verb=DELETE,
                         expected_status_code=204,
                         endpoint=f"https://api.genesiscloud.com/compute/v1/security-groups/{security_group_id}")
@@ -431,3 +443,401 @@ def instance_types():
             price_per_gpu = 0.36
         data[idx] += [f"${int(data[idx][-1])*price_per_gpu}"]
     return data
+
+
+# We build up a rudimentary type-checking system
+# in order to prevent sending erroneous API requests
+# and also to make the code more self-documenting.
+
+def assert_that(x, verifier):
+    assert verifier(x)
+    return True
+
+def has_type(type):
+    def verifier(value):
+        assert type(value) is type
+        return True
+    return verifier
+
+def is_a_string():
+    return has_type(str)
+
+strings = is_a_string
+
+def is_an_integer():
+    return has_type(int)
+
+integers = is_an_integer
+
+def is_an_id():
+    return is_a_string()
+
+ids = is_an_id
+
+def is_an_ISO8601_time():
+    return is_a_string()
+
+ISO8601_times = is_an_ISO8601_time
+
+def is_an_ip_address():
+    return is_a_string()
+
+ip_addresses = is_an_ip_address
+
+def is_a_choice_from(*choices):
+    def verifier(value):
+        assert value in choices
+        return True
+    return verifier
+
+choices_from = is_a_choice_from
+
+def is_boolean():
+    return is_a_choice_from("true", "false")
+
+booleans = is_boolean
+
+def is_a_list_of(item_type):
+    list_verifier = has_type(list)
+    item_verifier = has_type(item_type)
+    def verifier(value):
+        assert list_verifier(value)
+        for item in value:
+            assert item_verifier(item)
+        return True
+    return verifier
+
+lists_of = is_a_list_of
+
+def is_an_object(required={}, optional={}, **kwargs):
+    # kwargs can be used for convenience to patch required
+    for (k, v) in kwargs.items():
+        required[k] = v
+    def verifier(value):
+        for (k, v) in required.items():
+            assert k in value
+            assert v(k)
+        for (k, v) in optional.items():
+            if k in value:
+                assert v(k)
+        for k in value:
+            assert k in required or k in optional
+        return True
+    return verifier
+
+objects = is_an_object
+
+def is_an_api_instance_type_identifier():
+    return is_a_string()
+
+api_instance_type_identifiers = is_an_api_instance_type_identifier
+
+def is_an_instance_id():
+    return is_an_id()
+
+instance_ids = is_an_instance_id
+
+def is_an_image_id():
+    return is_an_id()
+
+image_ids = is_an_image_id
+
+def is_a_snapshot_id():
+    return is_an_id()
+
+snapshot_ids = is_a_snapshot_id
+
+def is_a_security_group_id():
+    return is_an_id()
+
+security_group_ids = is_a_security_group_id
+
+def is_a_volume_id():
+    return is_an_id()
+
+volume_ids = is_a_volume_id
+
+def is_an_instance():
+    return is_an_object(
+        required={
+            "id": is_an_instance_id(),
+            "name": is_a_string(),
+            "hostname": is_a_string(),
+            "type": is_an_api_instance_type_identifier(),
+            "image": is_an_object({
+                "id": is_an_image_id(),
+                "name": is_a_string()}),
+            "ssh_keys": is_a_list_of(objects({
+                "id": is_an_ssh_key_id(),
+                "name": is_a_string()})),
+            "security_groups": is_a_list_of(objects({
+                "id": is_a_security_group_id(),
+                "name": is_a_string()})),
+            "volumes": is_a_list_of(objects({
+                "id": is_a_volume_id(),
+                "name": is_a_string()})),
+            "is_protected": is_a_boolean(),
+            "status": is_a_choice_from("enqueued", "creating", "active",
+                                       "shutdown", "copying", "restarting",
+                                       "starting", "stopping", "deleting",
+                                       "error", "unknown"),
+            "created_at": is_an_ISO8601_time(),
+            "updated_at": is_an_ISO8601_time()},
+        optional={
+            "private_ip": is_an_ip_address(),
+            "public_ip": is_an_ip_address()})
+
+instances = is_an_instance
+
+def is_an_image():
+    return is_an_object({
+        "id": is_a_string(),
+        "name": is_a_string(),
+        "type": is_a_choice_from("base-os", "preconfigured", "snapshot"),
+        "created_at": is_an_ISO8601_time()})
+
+images = is_an_image
+
+def is_a_snapshot():
+    return is_an_object({
+        "id": is_a_snapshot_id(),
+        "name": is_a_string(),
+        "status": is_a_choice_from("creating", "active", "shutdown",
+                                   "copying", "restarting", "starting",
+                                   "stopping", "deleting", "error",
+                                   "unknown"),
+        "resource_id": is_an_instance_id(),
+        "created_at": is_an_ISO8601_time()})
+
+snapshots = is_a_snapshot
+
+def is_a_create_instance_body():
+    return is_an_object(
+        required={
+            "name": is_a_string(),
+            "hostname": is_a_string(),
+            "type": is_an_api_instance_type_identifier(),
+            "image": is_an_image_id(),
+            "ssh_keys": is_a_list_of(ssh_key_ids())}},
+        optional={
+            "password": is_a_string(),
+            "security_groups": is_a_list_of(security_group_ids()),
+            "is_protected": is_a_boolean(),
+            "metadata": is_an_object(
+                optional={
+                    "startup_script": is_a_bash_script()})})
+
+def is_a_create_instance_response():
+    return is_an_instance()
+
+def is_a_list_all_instances_response():
+    return is_an_object({
+        "total_count": is_an_integer(),
+        "page": is_an_integer(),
+        "per_page": is_an_integer(),
+        "instances": is_a_list_of(instances())})
+
+def is_a_get_instance_response():
+    return is_a_list_all_instances_response()
+
+def is_a_snapshot_an_instance_response():
+    return is_a_snapshot()
+
+def is_a_list_snapshots_of_an_instance_response():
+    return is_an_object({
+        "total_count": is_an_integer(),
+        "page": is_an_integer(),
+        "per_page": is_an_integer(),
+        "snapshots": is_a_list_of(snapshots())})
+
+def is_an_attachdetach_security_groups_from_an_instance_body():
+    return is_an_object({
+        "security_groups": is_a_list_of(security_group_ids())})
+
+def is_an_attachdetach_security_groups_from_an_instance_response():
+    return is_an_instance()
+
+def is_an_attachdetach_volumes_from_an_instance_body():
+    return is_an_object({
+        "volumes": is_a_list_of(volume_ids())})
+
+def is_an_attachdetach_volumes_from_an_instance_response():
+    return is_an_instance()
+
+def is_an_update_an_instance_body():
+    return is_an_object(
+        optional={
+            "name": is_a_string(),
+            "is_protected": is_a_boolean(),})
+
+def is_an_update_an_instance_response():
+    return is_an_instance()
+
+def is_a_get_instance_actions_response():
+    return is_an_object({
+        "actions": is_a_list_of(choices_from("start", "stop", "reset"))})
+
+def is_a_perform_action_body():
+    return is_an_object({
+        "action": is_a_choice_from("start", "stop", "reset")})
+
+def is_a_list_images_query():
+    return is_an_object(optional={
+        "type": is_a_choice_from("base-os", "preconfigured", "snapshot"),
+        "page": is_an_integer(),
+        "per_page": is_an_integer()})
+
+def is_a_list_images_response():
+    return is_an_object({
+        "type": is_a_choice_from("base-os", "preconfigured", "snapshot"),
+        "page": is_an_integer(),
+        "per_page": is_an_integer(),
+        "images": is_a_list_of(images())})
+
+def is_a_list_snapshots_query():
+    return is_an_object(
+        optional={
+            "per_page": is_an_integer(),
+            "page": is_an_integer()})
+
+def is_a_list_snapshots_response():
+    return is_an_object({
+        "snapshots": is_a_list_of(snapshots()),
+        "total_count": is_an_integer(),
+        "page": is_an_integer(),
+        "per_page": is_an_integer()})
+
+def is_a_get_snapshot_response():
+    return is_a_snapshot()
+
+def is_a_create_a_volume_body():
+    return is_an_object({
+        "name": is_a_string(),
+        "description": is_a_string(),
+        "size": is_an_integer()})
+
+def is_a_volume():
+    return is_an_object({
+        "id": is_a_volume_id(),
+        "name": is_a_string(),
+        "description": is_a_string(),
+        "size": is_an_integer(), # Note: genesiscloud makes an error in doc here?
+        "instances": is_a_list_of(objects({
+            "id": is_an_instance_id(),
+            "name": is_a_string()})),
+        "status": is_a_choice_from("available", "deleted", "error"),
+        "created_at": is_an_ISO8601_time()})
+
+volumes = is_a_volume
+
+def is_a_create_a_volume_response():
+    return is_a_volume()
+
+def is_a_list_volumes_query():
+    return is_an_object(
+        optional={
+            "per_page": is_an_integer(),
+            "page": is_an_integer()})
+
+def is_a_list_volumes_response():
+    return is_an_object({
+        "volumes": is_a_list_of(volumes()),
+        "total_count": is_an_integer(),
+        "page": is_an_integer(),
+        "per_page": is_an_integer()})
+
+def is_a_get_volume_response():
+    return is_a_volume()
+
+def is_a_list_ssh_keys_response():
+    return is_an_object({
+        "ssh_keys":
+            is_a_list_of(objects({
+                "id": is_a_string(),
+                "name": is_a_string(),
+                "public_key": is_a_string(),
+                "created_at": is_an_ISO8601_time()})))),
+        "total_count": is_an_integer(),
+        "page": is_an_integer(),
+        "per_page": is_an_integer()})
+
+def is_a_rule():
+    object_verifier = is_an_object(
+        required={
+            "protocol": choice_from("icmp", "tcp", "udp"),
+            "direction": choice_from("ingress", "egress")}
+        optional={
+            "port_range_min": is_an_integer(),
+            "port_range_max": is_an_integer()})
+    extra_requirements = is_an_object(
+        required={
+            "port_range_min": is_an_integer(),
+            "port_range_max": is_an_integer()})
+    def verifier(value):
+        assert object_verifier(value)
+        if value["protocol"] in ["tcp", "udp"]:
+            assert extra_requirements(value)
+        return True
+    return verifier
+
+rules = is_a_rule
+
+def is_a_security_group():
+    return is_an_object({
+        "id": is_a_string(),
+        "name": is_a_string(),
+        "description": is_a_string(),
+        "status": is_a_choice_from("enqueued", "creating", "created",
+                                   "updating", "deleting", "error"),
+        "rules": is_a_list_of(rules()),
+        "created_at": is_an_ISO8601_time()})
+
+security_groups = is_a_security_group
+
+def is_a_create_security_group_body():
+    return is_an_object(
+        required={
+            "name": is_a_string(),
+            "rules": is_a_list_of(rules())},
+        optional={
+            "description": is_a_string()})
+
+def is_a_create_security_group_response():
+    return is_a_security_group()
+
+def is_an_update_security_groups_body():
+    return is_an_object(
+        required={
+            "name": is_a_string(),
+            "rules": is_a_list_of(rules())},
+        optional={
+            "description": is_a_string()})
+
+def is_an_update_security_groups_response():
+    return is_a_security_group()
+
+def is_a_list_security_groups_query():
+    return is_an_object(
+        optional={
+            "per_page": is_an_integer(),
+            "page": is_an_integer()})
+
+def is_a_list_security_groups_response():
+    return is_an_object({
+        "security_groups": is_a_list_of(objects({
+            "id": is_a_string(),
+            "name": is_a_string(),
+            "description": is_a_string(),
+            "rules": is_a_list_of(rules())})),
+        "total_count": is_an_integer(),
+        "page": is_an_integer(),
+        "per_page": is_an_integer()})
+
+def is_a_get_security_group_response():
+    return is_an_object({
+        "security_group": is_an_object({
+            "id": is_a_string(),
+            "name": is_a_string(),
+            "description": is_a_string(),
+            "rules": is_a_list_of(rules()),
+            "created_at": is_an_ISO8601_time()})})
