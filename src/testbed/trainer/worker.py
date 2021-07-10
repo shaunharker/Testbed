@@ -23,7 +23,8 @@ class Worker(ctx.Process):
         while True:
             try:
                 return self._closure()
-            except RuntimeError:
+            except RuntimeError as err:
+                print(f"Closure computation experienced RuntimeError {err}.")
                 self.minibatches *= 2
                 self.minibatch_size = self.batch_size // self.minibatches
                 if self.minibatch_size == 0:
@@ -50,9 +51,12 @@ class Worker(ctx.Process):
                 loss.backward()
             num_examples += torch.numel(batch_losses)
             Y.append(batch_losses.detach())
+            if torch.any(torch.isnan(batch_losses)):
+                raise RuntimeError("1nan")
         Y = torch.cat(Y)
+
         if torch.any(torch.isnan(Y)):
-            raise RuntimeError("nan")
+            raise RuntimeError("2nan")
         mean_loss = torch.mean(Y).item()
         mean_sqr_loss = torch.mean(Y*Y).item()
         return (mean_loss, mean_sqr_loss, num_examples)
@@ -102,6 +106,8 @@ class Worker(ctx.Process):
             self.example_length = self.inbox.get()
             self.batch_size = self.inbox.get()
             self.OptimizerType = self.inbox.get()
+            self.optimizer_args = self.inbox.get()
+            self.optimizer_kwargs = self.inbox.get()
             self.dataset = self.inbox.get()
             self.compute_time = self.inbox.get()
             self.compute_energy = self.inbox.get()
@@ -109,7 +115,7 @@ class Worker(ctx.Process):
             self.losses = self.inbox.get()
             self.dataset.set_example_length(self.example_length)
             self.loader = Loader(self.dataset, batch_size=self.batch_size)
-            self.optimizer = self.OptimizerType(self.model.parameters())
+            self.optimizer = self.OptimizerType(self.model.parameters(), *self.optimizer_args, **self.optimizer_kwargs)
             self.minibatches = 1
             self.minibatch_size = self.batch_size
             print(f"{self.step}. This is the worker process.")
@@ -183,5 +189,7 @@ class Worker(ctx.Process):
             'example_length': self.example_length,
             'batch_size': self.batch_size,
             'OptimizerType': self.OptimizerType,
+            'optimizer_args': self.optimizer_args,
+            'optimizer_kwargs': self.optimizer_kwargs,
             'dataset.filename': self.dataset.filename}
         torch.save(checkpoint, savefile)

@@ -13,6 +13,8 @@ class Trainer:
                  example_length=64, # text example length
                  batch_size=32, # initial batch size
                  OptimizerType=None,
+                 optimizer_args=[],
+                 optimizer_kwargs={},
                  dataset=None):
 
         self.example_length = example_length
@@ -20,6 +22,8 @@ class Trainer:
         if OptimizerType is None:
             OptimizerType = torch.optim.AdamW
         self.OptimizerType = OptimizerType
+        self.optimizer_args = optimizer_args
+        self.optimizer_kwargs = optimizer_kwargs
         self.inbox = Queue()
         self.outbox = Queue()
         self.loss_inbox = Queue()
@@ -86,6 +90,8 @@ class Trainer:
             self.outbox.put(self.example_length)
             self.outbox.put(self.batch_size)
             self.outbox.put(self.OptimizerType)
+            self.outbox.put(self.optimizer_args)
+            self.outbox.put(self.optimizer_kwargs)
             self.outbox.put(self.dataset)
             self.outbox.put(self.compute_time)
             self.outbox.put(self.compute_energy)
@@ -142,6 +148,8 @@ class Trainer:
         self.example_length = checkpoint["example_length"]
         self.batch_size = checkpoint["batch_size"]
         self.OptimizerType = checkpoint["OptimizerType"]
+        self.optimizer_args = checkpoint["optimizer_args"]
+        self.optimizer_kwargs = checkpoint["optimizer_kwargs"]
         filename = checkpoint["dataset.filename"]
         if filename == self.dataset.filename:
             self.dataset.set_example_length(self.example_length)
