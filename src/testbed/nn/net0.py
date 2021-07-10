@@ -1,6 +1,7 @@
 import torch
 from torch.nn import Module, Embedding, Linear, CrossEntropyLoss, Softmax
 import math
+from torch.cuda.amp import autocast
 
 class Net0(Module):
     def __init__(self,
@@ -67,6 +68,7 @@ class Net0(Module):
     def compute_energy(self):
         return 3.0*(self.embedding_dim*self.context_length*self.num_hidden + self.num_hidden*self.num_output_classes + self.num_hidden + self.num_output_classes)/1.0E12
 
+    @autocast()
     def forward(self, batch):
         """
         example_length = batch.shape[-1]

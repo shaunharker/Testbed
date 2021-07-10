@@ -39,9 +39,9 @@ class Trainer:
             self.dataset = dataset
         if model is not None:
             if type(model) is str:
-                self.load(model).half().to(device='cuda')
+                self.load(model).to(device='cuda')
             else:
-                self.model = model.half().to(device='cuda')
+                self.model = model.to(device='cuda')
 
     def set_batch_size(self, batch_size):
         if self.running == True:

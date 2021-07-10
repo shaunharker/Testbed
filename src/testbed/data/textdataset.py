@@ -30,7 +30,9 @@ class TextDataset:
                 self.cache_size = 2**30
                 print(f"Increased TextDataset cache_size to {self.cache_size}.")
             self.count = 0
+            print("Caching...")
             self._cache_data()
+            print("Done.")
         offset = idx
         while offset%self.run_length > self.run_length - self.example_length:
             offset = randrange(len(self))
@@ -50,6 +52,7 @@ class TextDataset:
         self.run_length = 65536//self.example_length * self.example_length
         self.num_runs = self.cache_size//self.run_length
         offsets = [randrange(self.file_length-self.run_length) for _ in range(self.num_runs)]
+        del self.data
         self.data = (
             torch.as_tensor(
                 np.concatenate(
@@ -59,6 +62,6 @@ class TextDataset:
                         count=self.run_length,
                         sep='',
                         offset=offset)
-                    for offset in offsets])))
+                    for offset in offsets])).to('cuda'))
         self.data_length=len(self.data)
         print(f"Loaded {self.data_length} bytes of training data.")
