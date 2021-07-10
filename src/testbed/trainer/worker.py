@@ -108,7 +108,6 @@ class Worker(ctx.Process):
             self.step = self.inbox.get()
             self.losses = self.inbox.get()
             self.dataset.set_example_length(self.example_length)
-            self.dataset.cache_data()
             self.loader = Loader(self.dataset, batch_size=self.batch_size)
             self.optimizer = self.OptimizerType(self.model.parameters())
             self.minibatches = 1

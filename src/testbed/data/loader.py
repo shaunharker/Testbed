@@ -1,4 +1,4 @@
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
 class Loader:
     def __init__(self, dataset, batch_size):
@@ -7,6 +7,7 @@ class Loader:
         self.refresh_loader()
 
     def refresh_loader(self):
+        #sampler = SequentialSampler(self.dataset)
         sampler = RandomSampler(self.dataset,
                                 replacement=True)
         self.loader = DataLoader(self.dataset,
@@ -21,7 +22,7 @@ class Loader:
         try:
             item = next(self.it)
         except StopIteration:
-            refresh_loader()
+            self.refresh_loader()
             item = next(self.it)
         return item
 
