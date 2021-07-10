@@ -23,7 +23,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .validate import validate_input, validate_output
+#from .validate import validate_input, validate_output
 
 import json
 import time
@@ -52,67 +52,12 @@ class Client:
         self.time_of_last_api_call = time.time()
 
     # Instances. See https://developers.genesiscloud.com/instances
-    class CreateInstanceRequest(TypedDict):
-        name: str
-        hostname: str
-        type: str
-        image: str
-        ssh_keys: List[str]
 
-
-    class CreateInstanceRequestWithOptional(CreateInstanceRequest)
     def create_instance(self,
                         body_parameters: TypedDict={},
                         **kwargs):
         """
         https://developers.genesiscloud.com/instances#create-an-instance
-
-        is_valid_input_to_create_instance = (
-            is_an_object(
-                required={
-                    "name": is_a_string(),
-                    "hostname": is_a_string(),
-                    "type": is_an_api_instance_type_identifier(),
-                    "image": is_an_image_id(),
-                    "ssh_keys": is_a_list_of(ssh_key_ids())},
-                optional={
-                    "password": is_a_string(),
-                    "security_groups": is_a_list_of(security_group_ids()),
-                    "is_protected": is_a_boolean(),
-                    "metadata": is_an_object(
-                        optional={
-                            "startup_script": is_a_bash_script()})}))
-
-        is_valid_output_from_create_instance = (
-                is_an_object(
-                    required={
-                        "id": is_an_instance_id(),
-                        "name": is_a_string(),
-                        "hostname": is_a_string(),
-                        "type": is_an_api_instance_type_identifier(),
-                        "image": is_an_object({
-                            "id": is_an_image_id(),
-                            "name": is_a_string()}),
-                        "ssh_keys": is_a_list_of(objects({
-                            "id": is_an_ssh_key_id(),
-                            "name": is_a_string()})),
-                        "security_groups": is_a_list_of(objects({
-                            "id": is_a_security_group_id(),
-                            "name": is_a_string()})),
-                        "volumes": is_a_list_of(objects({
-                            "id": is_a_volume_id(),
-                            "name": is_a_string()})),
-                        "is_protected": is_a_boolean(),
-                        "status": is_a_choice_from("enqueued", "creating", "active",
-                                                   "shutdown", "copying", "restarting",
-                                                   "starting", "stopping", "deleting",
-                                                   "error", "unknown"),
-                        "created_at": is_an_ISO8601_time(),
-                        "updated_at": is_an_ISO8601_time()},
-                    optional={
-                        "private_ip": is_an_ip_address(),
-                        "public_ip": is_an_ip_address()}))
-
         """
         response = self.api(
             command="create_instance",
@@ -497,10 +442,11 @@ class Client:
         Call used by the other methods to interact with api.genesiscloud.com
         """
         # Validate the input
-        validate_input(command,
-                       query_parameters=query_parameters,
-                       body_parameters=body_parameters,
-                       **kwargs)
+        if False:
+            validate_input(command,
+                           query_parameters=query_parameters,
+                           body_parameters=body_parameters,
+                           **kwargs)
 
         # This ensures we won't hit the self.api rate limit of 10Hz,
         # unless class users break the singleton pattern:
@@ -546,6 +492,7 @@ class Client:
 
         # Validate the output
         try:
+            pass
             validate_output(command, response)
         except AssertionError:
             print("Warning: could not validate response "
