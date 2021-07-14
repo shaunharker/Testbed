@@ -12,13 +12,18 @@ class Trainer:
                  model=None,
                  example_length=64, # text example length
                  batch_size=32, # initial batch size
+                 DatasetType=None,
+                 dataset_kwargs={},
                  OptimizerType=None,
                  optimizer_args=[],
-                 optimizer_kwargs={},
-                 dataset=None):
+                 optimizer_kwargs={}):
 
         self.example_length = example_length
         self.batch_size = batch_size
+        if DatasetType is None:
+            DatasetType = TextDataset
+        self.DatasetType = DatasetType
+        self.dataset_kwargs = dataset_kwargs
         if OptimizerType is None:
             OptimizerType = torch.optim.AdamW
         self.OptimizerType = OptimizerType
@@ -33,10 +38,9 @@ class Trainer:
         self.compute_time = 0.0
         self.compute_energy = 0.0
         self.losses = []
-        if dataset is None:
-            self.dataset = TextDataset(example_length=example_length)
-        else:
-            self.dataset = dataset
+
+        self.dataset = DatasetType(example_length=example_length)
+
         if model is not None:
             if type(model) is str:
                 self.load(model).to(device='cuda')
@@ -92,7 +96,8 @@ class Trainer:
             self.outbox.put(self.OptimizerType)
             self.outbox.put(self.optimizer_args)
             self.outbox.put(self.optimizer_kwargs)
-            self.outbox.put(self.dataset)
+            self.outbox.put(self.DatasetType)
+            self.outbox.put(self.dataset_kwargs)
             self.outbox.put(self.compute_time)
             self.outbox.put(self.compute_energy)
             self.outbox.put(self.step)

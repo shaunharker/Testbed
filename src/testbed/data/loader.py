@@ -7,8 +7,9 @@ class Loader:
         self.refresh_loader()
 
     def refresh_loader(self):
-        sampler = RandomSampler(self.dataset,
-                                replacement=True)
+        sampler = SequentialSampler(self.dataset)
+        # sampler = RandomSampler(self.dataset,
+        #                         replacement=True)
         self.loader = DataLoader(self.dataset,
                                  sampler=sampler,
                                  batch_size=self.batch_size,

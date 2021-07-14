@@ -1,19 +1,29 @@
 import torch
 import math
+import time
 from random import randrange, randint
 from ..util import default_device, decode_broken_utf8
 from pathlib import Path
 import numpy as np
+import threading
 
 class TextDataset:
     def __init__(self,
                  filename='/home/sharker/data/corpus.utf8.txt',
-                 example_length=64):
+                 example_length=64,
+                 shuffle=True,
+                 max_cache=2**30,
+                 dataline_size=2**20):
         self.set_data_path(filename)
         self.set_example_length(example_length)
+        self.shuffle = shuffle
+        self.dataline_size = dataline_size
+        self.max_cache = max_cache
         self.count = 0
-        self.cache_size = 65536
-        self._cache_data()
+        self.loader = threading.Thread(target=self._loading_daemon, daemon=True)
+        self.lock = threading.Lock()
+        self._cache_lines(1)
+        self.loader.start()
 
     def set_data_path(self, filename):
         self.filename = filename
@@ -25,21 +35,19 @@ class TextDataset:
 
     def __getitem__(self, idx):
         self.count += 1
-        if self.count == self.cache_size:
-            if self.cache_size < 2**30:
-                self.cache_size = 2**30
-                print(f"Increased TextDataset cache_size to {self.cache_size}.")
-            self.count = 0
-            print("Caching...")
-            self._cache_data()
-            print("Done.")
-        offset = idx
-        while offset%self.run_length > self.run_length - self.example_length:
+        if self.shuffle:
             offset = randrange(len(self))
-        return self.data[offset:offset+self.example_length]
+            while (offset + self.example_length) % self.dataline_size < self.example_length:
+                offset = randrange(len(self))
+        else:
+            offset = self.count
+        self.lock.acquire()
+        item = self.data[offset:offset+self.example_length]
+        self.lock.release()
+        return item
 
     def __len__(self):
-        return self.data_length - self.example_length
+        return len(self.data) - self.example_length
 
     def random_text_snippet(self):
         idx = randrange(len(self))
@@ -48,20 +56,46 @@ class TextDataset:
     def inspect(self, idx):
         return decode_broken_utf8(self[idx])
 
-    def _cache_data(self):
-        self.run_length = 65536//self.example_length * self.example_length
-        self.num_runs = self.cache_size//self.run_length
-        offsets = [randrange(self.file_length-self.run_length) for _ in range(self.num_runs)]
-        del self.data
-        self.data = (
+    def _data_line(self, line_no=None):
+        if line_no is None:
+            offset = self.dataline_size * randrange((self.file_length-self.dataline_size)//self.dataline_size)
+        else:
+            offset = (line_no * self.dataline_size) % len(self)
+        return np.fromfile(
+                    self.filename,
+                    dtype=np.ubyte,
+                    count=self.dataline_size,
+                    sep='',
+                    offset=offset)
+
+    def _cache_lines(self, num_lines=2**10):
+        newdata = (
             torch.as_tensor(
                 np.concatenate(
-                    [np.fromfile(
-                        self.filename,
-                        dtype=np.ubyte,
-                        count=self.run_length,
-                        sep='',
-                        offset=offset)
-                    for offset in offsets])).to('cuda'))
-        self.data_length=len(self.data)
-        print(f"Loaded {self.data_length} bytes of training data.")
+                    [self._data_line() for _ in range(num_lines)])).to('cuda',non_blocking=True))
+        self.lock.acquire()
+        self.data = newdata
+        self.num_lines = num_lines
+        self.lock.release()
+        print(f"Loaded {len(self.data)} bytes of training data.")
+
+    def _refresh_line(self, line_no=None):
+        if line_no is None:
+            line_no = randrange(self.num_lines)
+        offset = self.dataline_size*line_no
+        line = torch.as_tensor(self._data_line()).to('cuda',non_blocking=True)
+        self.lock.acquire()
+        self.data[offset:offset+self.dataline_size] = line
+        self.lock.release()
+
+    def _loading_daemon(self):
+        count = self.count
+        i=1
+        while True:
+            time.sleep(.1)
+            if i <= 10 and self.count > len(self) // 2**10:
+                self._cache_lines(num_lines=2**i)
+                i = i + 1
+            if self.count > count:
+                self._refresh_line()
+                count = self.count

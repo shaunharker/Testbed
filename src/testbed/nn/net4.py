@@ -3,6 +3,7 @@ from torch.nn import Module, Embedding, Linear, CrossEntropyLoss, Softmax
 import math
 from torch.nn.functional import pad
 import numpy as np
+from torch.cuda.amp import autocast
 
 
 class MLP(Module):
@@ -52,6 +53,7 @@ class Net4(Module):
     def name(self):
         return f"Net4({self.E},{self.L},{self.M},{self.H},size={self.size()})"
 
+    @autocast()
     def forward(self, x0):
         """
         x : [..., seq_length]

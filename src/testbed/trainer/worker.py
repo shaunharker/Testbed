@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch.optim import AdamW
 from ..optim import Sonny
-from ..data import Loader
+from ..data import Loader, TextDataset
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
 from queue import Empty
@@ -18,6 +18,7 @@ class Worker(ctx.Process):
         self.step = 0
         self.compute_time = 0
         self.compute_energy = 0
+        self.consumed_examples = 0
 
     def closure(self):
         while True:
@@ -87,12 +88,13 @@ class Worker(ctx.Process):
                     self.compute_energy += self.model.compute_energy() * self.batch_size
                 except:
                     self.compute_energy += 0 # not implemented for model, so return 0.
+                self.consumed_examples += num_examples
                 step_info = {'step': self.step,
                              'compute_time': self.compute_time + stopwatch.time_elapsed,
                              'compute_energy': self.compute_energy,
                              'mean_loss': mean_loss,
                              'var_loss': var_loss,
-                             'num_examples': num_examples}
+                             'consumed_examples': self.consumed_examples}
                 self.losses.append(step_info)
                 self.loss_outbox.put(step_info)
         self.compute_time += stopwatch.total_run_time
@@ -108,11 +110,13 @@ class Worker(ctx.Process):
             self.OptimizerType = self.inbox.get()
             self.optimizer_args = self.inbox.get()
             self.optimizer_kwargs = self.inbox.get()
-            self.dataset = self.inbox.get()
+            self.DatasetType = self.inbox.get()
+            self.dataset_kwargs = self.inbox.get()
             self.compute_time = self.inbox.get()
             self.compute_energy = self.inbox.get()
             self.step = self.inbox.get()
             self.losses = self.inbox.get()
+            self.dataset = self.DatasetType(**self.dataset_kwargs)
             self.dataset.set_example_length(self.example_length)
             self.loader = Loader(self.dataset, batch_size=self.batch_size)
             self.optimizer = self.OptimizerType(self.model.parameters(), *self.optimizer_args, **self.optimizer_kwargs)

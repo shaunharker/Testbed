@@ -1,6 +1,7 @@
 import torch
 from torch.nn import Module, Embedding, Conv1d, Linear, Softmax, CrossEntropyLoss
 import math
+from torch.cuda.amp import autocast
 
 class Net1(Module):
     def __init__(self, H, L, K=8, C=256):
@@ -18,6 +19,7 @@ class Net1(Module):
     def name(self):
         return f"net1_H{self.H}_L{self.L}_K{self.K}_C{self.C}"
 
+    @autocast()
     def forward(self, X):
         """
         Input:
