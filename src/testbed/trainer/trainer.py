@@ -39,8 +39,9 @@ class Trainer:
         self.compute_energy = 0.0
         self.losses = []
 
-        self.dataset = DatasetType(example_length=example_length)
-
+        self.dataset = self.DatasetType(**self.dataset_kwargs)
+        self.dataset.set_example_length(self.example_length)
+        
         if model is not None:
             if type(model) is str:
                 self.load(model).to(device='cuda')
