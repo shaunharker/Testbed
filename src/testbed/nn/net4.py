@@ -6,9 +6,9 @@ from torch.cuda.amp import autocast
 class Net4(Module):
     def __init__(self,
                  num_input_classes=256, #50257,
-                 embedding_dim=16,
-                 context_length=64,
-                 num_hidden=256,
+                 embedding_dim=32,
+                 context_length=32,
+                 num_hidden=8192,
                  num_output_classes=256,
                  nonlinearity='sigmoid'):
         super().__init__()
@@ -19,21 +19,29 @@ class Net4(Module):
         self.num_output_classes = num_output_classes
         self.embedding = Embedding(self.num_input_classes, self.embedding_dim)
         self.encoder = Linear(self.embedding_dim*self.context_length, self.num_hidden, bias=False)
-        self.normalization = LayerNorm()
+        self.normalization = LayerNorm(self.num_hidden)
         self.nonlinearity = nonlinearity
         if nonlinearity == 'sigmoid':
             self.nonlinear = torch.nn.Sigmoid()
         if nonlinearity == 'GELU':
             self.nonlinear = torch.nn.GELU()
+        if nonlinearity == 'poly':
+            if degree is None:
+                degree = 7
+            self.degree = degree
+            self.nonlinear = Poly(degree=self.degree)
         self.decoder = Linear(self.num_hidden, self.num_output_classes)
         self.criterion = CrossEntropyLoss(reduction='none')
         self.softmax = Softmax(dim=-1)
 
     def name(self):
-        return f"Net0({self.num_input_classes},{self.embedding_dim},{self.context_length},{self.num_hidden},{self.num_output_classes},{self.nonlinearity})"
+        return f"Net4({self.num_input_classes},{self.embedding_dim},{self.context_length},{self.num_hidden},{self.num_output_classes},{self.nonlinearity})"
 
     def compute_energy(self):
-        return 3.0*(self.embedding_dim*self.context_length*self.num_hidden + self.num_hidden*self.num_output_classes + self.num_hidden + self.num_output_classes)/1.0E12
+        encoder_cost = 3.0*self.embedding_dim*self.context_length*self.num_hidden
+        normalization_cost = 3.0*self.num_hidden ## this is an underestimate, TODO FIX
+        decoder_cost = 3.0*(self.num_hidden*self.num_output_classes + self.num_output_classes)
+        return (encoder_cost+normalization_cost+decoder_cost)/1.0E12
 
     @autocast()
     def forward(self, batch):
@@ -48,6 +56,7 @@ class Net4(Module):
         y = batch[...,-1].view(-1) # y.shape == [...]
         x = x.view(-1,self.context_length*self.embedding_dim) # x.shape == [..., self.context_length*self.embedding_dim]
         x = self.encoder(x) # x.shape == [..., self.num_hidden]
+        x = self.normalization(x) # x.shape == [..., self.num_hidden]
         x = self.nonlinear(x) # x.shape == [..., self.num_hidden]
         x = self.decoder(x) # x.shape == [..., self.num_output_classes]
         loss = self.criterion(x,y)/math.log(2)
@@ -62,6 +71,7 @@ class Net4(Module):
         x = self.embedding(X[...,-self.context_length:]) # x.shape == [B, L, K]
         x = x.view(-1,self.context_length*self.embedding_dim) # x.shape == [..., self.context_length*self.embedding_dim]
         x = self.encoder(x) # x.shape == [..., self.num_hidden]
+        x = self.normalization(x) # x.shape == [..., self.num_hidden]
         x = self.nonlinear(x) # x.shape == [..., self.num_hidden]
         x = self.decoder(x) # x.shape == [..., self.num_output_classes]
         P = self.softmax(x) # P.shape == [..., self.num_output_classes]
