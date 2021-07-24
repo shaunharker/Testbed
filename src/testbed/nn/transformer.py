@@ -2,116 +2,147 @@ import math
 import torch
 import torch.nn.functional as F
 import time
-from torch.nn import TransformerEncoder, TransformerEncoderLayer, Dropout, Embedding, Linear, CrossEntropyLoss, Softmax
+from torch.nn import TransformerEncoder, TransformerEncoderLayer, Dropout, Embedding, Linear, CrossEntropyLoss, Softmax, LayerNorm
 
-class PositionalEncoding(torch.nn.Module):
-    r"""Inject some information about the relative or absolute position of the tokens
-        in the sequence. The positional encodings have the same dimension as
-        the embeddings, so that the two can be summed. Here, we use sine and cosine
-        functions of different frequencies.
-    .. math::
-        \text{PosEncoder}(pos, 2i) = sin(pos/10000^(2i/d_model))
-        \text{PosEncoder}(pos, 2i+1) = cos(pos/10000^(2i/d_model))
-        \text{where pos is the word position and i is the embed idx)
-    Args:
-        d_model: the embed dim (required).
-        dropout: the dropout value (default=0.1).
-        max_len: the max. length of the incoming sequence (default=5000).
-    Examples:
-        >>> pos_encoder = PositionalEncoding(d_model)
-    """
 
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        self.dropout = Dropout(p=dropout)
+class MultiHeadSelfAttention(torch.nn.Module):
+    def __init__(self, d_model, n_heads):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        d_head = d_k = d_v = d_model // n_heads # assume these are equal for this implementation
+        self.d_head = d_head
+        self.layernorm = LayerNorm(d_model)
+        self.query_projection = Linear(d_model, d_k * n_heads)
+        self.key_projection = Linear(d_model, d_k * n_heads)
+        self.value_projection = Linear(d_model, d_v * n_heads)
+        self.attention_softmax = torch.nn.Softmax(dim=-1) # TODO: GPT-2 apparently does a slightly different softmax.
+        self.output_projection = Linear(d_v * n_heads, d_model)
 
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-        self.register_buffer('pe', pe)
+    def forward(self, X):
+        """
+        input: X has shape [..., n_ctx, d_model]
+        output: has shape [..., n_ctx, d_model]
+        """
+        input_shape = X.shape
+        n_ctx = X.shape[-2]
+        n_heads = self.n_heads
+        d_model = self.d_model
+        d_head = self.d_head
+        assert input_shape[-1] == d_model
+        assert d_model == n_heads * d_head
+        X = self.layernorm(X)
+        Q = self.query_projection(X)
+        K = self.key_projection(X)
+        V = self.value_projection(X)
+        def split_heads(x):
+            return x.view(x.shape[:-1] + [n_heads, d_head]).transpose(-2, -3)
+        def merge_heads(x):
+            return x.transpose(-2, -3).view(x.shape[:-2] + [d_model])
+        Q = split_heads(Q)
+        K = split_heads(K)
+        V = split_heads(V)
+        QKT = torch.matmul(Q, K.transpose(-1,-2))
+
+        additive_mask = 1.0-1.0/torch.tril(torch.ones(n_ctx,n_ctx))
+        # The expected behavior of the last line is:
+        #   additive_mask has shape [n_ctx, n_ctx] and is defined by
+        #   additive_mask[i,j] := | 0.0    if i >= j
+        #                         | -inf   otherwise
+
+        A = self.attention_softmax(torch.tril(QKT/math.sqrt(d_k))+additive_mask)
+        AV = merge_heads(torch.matmul(A,V))
+        Y = self.output_projection(AV)
+        return Y
+
+
+class FeedForward(torch.nn.Module):
+    def __init__(self, d_model, d_ff):
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.layernorm = LayerNorm(d_model)
+        self.layer0 = Linear(d_model, d_ff)
+        self.nonlinear = torch.nn.GELU()
+        self.layer1 = Linear(d_ff, d_model)
 
     def forward(self, x):
-        r"""Inputs of forward function
-        Args:
-            x: the sequence fed to the positional encoder model (required).
-        Shape:
-            x: [sequence length, batch size, embed dim]
-            output: [sequence length, batch size, embed dim]
-        Examples:
-            >>> output = pos_encoder(x)
-        """
+        x = self.layernorm(x)
+        x = self.layer0(x)
+        x = self.nonlinear(x)
+        x = self.layer1(x)
+        return x
 
-        x = x + self.pe[:x.size(0), :]
-        return self.dropout(x)
+
+class TransformerLayer(torch.nn.Module):
+    def __init__(self, d_model=64, n_heads=8, d_ff=2048):
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_ff = d_ff
+        self.multiheadselfattention = MultiHeadSelfAttention(d_model, n_heads)
+        self.feedforward = Feedforward(d_model, d_ff)
+
+    def forward(self, x):
+        x = x + self.multiheadselfattention(x)
+        x = x + self.feedforward(x)
+        return x
+
 
 class Transformer(torch.nn.Module):
-    def __init__(self, ntoken=256, d_model=64, n_heads=8, d_ff=2048, nlayers=6, dropout=0.1):
-        super(Transformer, self).__init__()
-        self.L = 64
-        self.hyp = {
-            "ntoken": ntoken,
-            "ninp": ninp,
-            "nhead": nhead,
-            "nhid": nhid,
-            "nlayers": nlayers,
-            "dropout": dropout}
-        self.model_type = 'Transformer'
-        self.src_mask = None
-        self.pos_encoder = PositionalEncoding(ninp, dropout)
-        encoder_layers = TransformerEncoderLayer(ninp, nhead, nhid, dropout)
-        self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
-        self.encoder = Embedding(ntoken, ninp)
-        self.decoder = Linear(ninp, ntoken)
-        self.criterion = CrossEntropyLoss()
-        self.softmax = Softmax(dim=-1)
-        self.init_weights()
+    """
+    Transformer for Generative Language Model; basically GPT2's design.
+    """
+    def __init__(self,
+                 n_vocab=256,
+                 max_ctx=512,
+                 d_model=64,
+                 n_heads=8,
+                 d_ff=2048,
+                 n_layers=6):
+        super().__init__()
+        self.n_vocab = n_vocab
+        self.max_ctx = max_ctx
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_ff = d_ff
+        self.n_layers = n_layers
+        self.input_embedding = Embedding(n_vocab, d_model)
+        self.positional_encoding = torch.nn.Parameter(0.02*torch.randn(max_ctx, d_model))
+        self.layers = [TransformerLayer(d_model, n_heads, d_ff) for _ in range(n_layers)]
+        self.decoder = Linear(d_model, n_vocab)
 
-    def _generate_square_subsequent_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-
-    def init_weights(self):
-        initrange = 0.1
-        torch.nn.init.uniform_(self.encoder.weight, -initrange, initrange)
-        torch.nn.init.zeros_(self.decoder.weight)
-        torch.nn.init.uniform_(self.decoder.weight, -initrange, initrange)
-
-    def forward(self, X, has_mask=True):
-        X = X.t().contiguous() # shape [N, B]
-        x = X[:-1] # shape [N-1, B]
-        y = X[1:]  # shape [N-1, B]
-        x = self.encoder(x) * math.sqrt(self.hyp['ninp']) # shape [N-1, B, E]
-        x = self.pos_encoder(x) # shape [N-1, B, E]
-        if has_mask:
-            device = X.device
-            if self.src_mask is None or self.src_mask.size(0) != len(x):
-                mask = self._generate_square_subsequent_mask(len(x)).to(device)
-                self.src_mask = mask
+    def forward(self, X, probs=False):
+        """
+        input
+          X has shape [..., n_ctx+1] and dtype long. It gives vocab indices.
+          probs: if True, then output gives an [..., n_ctx+1, n_vocab] matrix of
+                 probabilities giving the predictions of the model. See also self.probs
+        output
+          has shape [..., n_ctx] and contains the loss of its ... * n_ctx predictions.
+          (unless probs=True is set, in which case the output is as described above)
+        """
+        X = X[...,:-1]
+        Y = X[...,1:]
+        X = self.input_embedding(X)
+        n_ctx = X.shape[-2]
+        assert n_ctx <= self.max_ctx
+        # Now X has shape [..., n_ctx, d_model] and Y has shape [..., n_ctx]
+        X = X + self.positional_encoding[...,-n_ctx:,:]
+        for layer in self.layers:
+            X = layer(X)
+        X = self.decoder(X)
+        # Now X has shape [..., n_ctx, n_vocab] and Y has shape [..., n_ctx]
+        if probs:
+            # Softmax(dim=-1)
+            EX = torch.exp(X)
+            sumEX = torch.sum(EX,dim=-1,keepdim=True)
+            return EX/sumEX
         else:
-            self.src_mask = None
-        x = self.transformer_encoder(x, self.src_mask) # shape [N-1, B, E]
-        x = self.decoder(x).view(-1,self.hyp['ntoken']) # shape [(N-1)*B, K]
-        y = y.view(-1) # shape [(N-1)*B]
-        return self.criterion(x,y)# self.softmax(output, dim=-1)
+            # Per example, per token crossentropy loss
+            EX = torch.exp(X)
+            logsumEX = torch.log(torch.sum(torch.exp(X),dim=-1))
+            return (logsumEX - torch.gather(X,-1,Y))/math.log(2)
 
-    def probs(self, X, has_mask=True):
-        if X.dim == 1:
-            X = torch.unsqueeze(X, 0)
-        x = X # shape [B, N]
-        x = torch.transpose(x, 0, 1) # shape [N, B]
-        x = self.encoder(x) * math.sqrt(self.hyp['ninp']) # shape [N, B, E]
-        x = self.pos_encoder(x) # shape [N, B, E]
-        if has_mask:
-            device = X.device
-            if self.src_mask is None or self.src_mask.size(0) != len(x):
-                mask = self._generate_square_subsequent_mask(len(x)).to(device)
-                self.src_mask = mask
-        else:
-            self.src_mask = None
-        x = self.transformer_encoder(x, self.src_mask) # shape [N, B, E]
-        x = self.decoder(x)[-1] # shape [B, K]
-        return self.softmax(x) # shape [B]
+
+    def probs(self, X):
+        with torch.no_grad():
+            return forward(X, probs=True)

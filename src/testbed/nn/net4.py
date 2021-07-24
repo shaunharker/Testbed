@@ -43,7 +43,7 @@ class Net4(Module):
         decoder_cost = 3.0*(self.num_hidden*self.num_output_classes + self.num_output_classes)
         return (encoder_cost+normalization_cost+decoder_cost)/1.0E12
 
-    @autocast()
+    #@autocast()
     def forward(self, batch):
         """
         example_length = batch.shape[-1]
