@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import time
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Dropout, Embedding, Linear, CrossEntropyLoss, Softmax, LayerNorm, ModuleList
+from torch.cuda.amp import autocast
 
 
 class MultiHeadSelfAttention(torch.nn.Module):
@@ -19,6 +20,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.attention_softmax = torch.nn.Softmax(dim=-1) # Note: in contrast GPT2 implementation at https://github.com/openai/gpt-2/blob/master/src/model.py shifts values to make the max entry 0 before they do softmax
         self.output_projection = Linear(d_v * n_heads, d_model)
 
+    @autocast()
     def forward(self, X):
         """
         input: X has shape [..., n_ctx, d_model]
@@ -78,6 +80,7 @@ class FeedForward(torch.nn.Module):
         self.nonlinear = torch.nn.GELU()
         self.layer1 = Linear(d_ff, d_model)
 
+    @autocast()
     def forward(self, x):
         x = self.layernorm(x)
         x = self.layer0(x)
@@ -95,6 +98,7 @@ class TransformerLayer(torch.nn.Module):
         self.multiheadselfattention = MultiHeadSelfAttention(d_model, n_heads)
         self.feedforward = FeedForward(d_model, d_ff)
 
+    @autocast()
     def forward(self, x):
         x = x + self.multiheadselfattention(x)
         x = x + self.feedforward(x)
@@ -107,11 +111,11 @@ class Transformer(torch.nn.Module):
     """
     def __init__(self,
                  n_vocab=256,
-                 max_ctx=512,
+                 max_ctx=1024,
                  d_model=64,
-                 n_heads=8,
-                 d_ff=2048,
-                 n_layers=6):
+                 n_heads=12,
+                 d_ff=4096,
+                 n_layers=12):
         super().__init__()
         self.n_vocab = n_vocab
         self.max_ctx = max_ctx
@@ -125,18 +129,25 @@ class Transformer(torch.nn.Module):
                                   for _ in range(n_layers)])
         self.decoder = Linear(d_model, n_vocab)
 
+    @autocast()
     def forward(self, X, probs=False):
         """
         input
-          X has shape [..., n_ctx+1] and dtype long. It gives vocab indices.
-          probs: if True, then output gives an [..., n_ctx+1, n_vocab] matrix of
+          X has dtype long. It gives vocab indices.
+          Define n_ctx = X.shape[-1] - 1. We subtract one because we use the last
+          token only as a classification label.
+
+          probs: if True, then
+                 input is considered to have shape [..., n_ctx]
+                 output gives an [..., n_ctx+1, n_vocab] matrix of
                  probabilities giving the predictions of the model. See also self.probs
         output
           has shape [..., n_ctx] and contains the loss of its ... * n_ctx predictions.
           (unless probs=True is set, in which case the output is as described above)
         """
-        Y = X[...,1:].contiguous()
-        X = X[...,:-1].contiguous()
+        if not probs:
+            Y = X[...,1:].contiguous()
+            X = X[...,:-1].contiguous()
         X = self.input_embedding(X)
         n_ctx = X.shape[-2]
         assert n_ctx <= self.max_ctx
