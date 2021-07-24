@@ -37,25 +37,16 @@ class MultiHeadSelfAttention(torch.nn.Module):
         Q = self.query_projection(X)
         K = self.key_projection(X)
         V = self.value_projection(X)
-        #print('1 X', X.shape)
-        #print('1 Q', Q.shape)
-        #print('1 K', K.shape)
-        #print('1 V', V.shape)
+
         def split_heads(x):
-            #print('split_heads', x.shape)
             return x.view(x.shape[:-1] + (n_heads, d_head)).transpose(-2, -3).contiguous()
         def merge_heads(x):
-            #print('1 merge_heads', x.shape, d_model)
             x = x.transpose(-2,-3).contiguous()
-            #print('2 merge_heads', x.shape, d_model)
             return x.view(x.shape[:-2] + (d_model,))
         Q = split_heads(Q)
         K = split_heads(K)
         V = split_heads(V)
 
-        #print('2 Q', Q.shape)
-        #print('2 K', K.shape)
-        #print('2 V', V.shape)
         QKT = torch.matmul(Q, K.transpose(-1,-2))
 
         additive_mask = 1.0-1.0/torch.tril(torch.ones(n_ctx,n_ctx, device=X.device))
@@ -64,7 +55,8 @@ class MultiHeadSelfAttention(torch.nn.Module):
         #   additive_mask[i,j] := | 0.0    if i >= j
         #                         | -inf   otherwise
 
-        A = self.attention_softmax(torch.tril(QKT/math.sqrt(d_head))+additive_mask)
+        masked = torch.tril(QKT/math.sqrt(d_head))+additive_mask
+        A = self.attention_softmax(masked)
         AV = merge_heads(torch.matmul(A,V))
         Y = self.output_projection(AV)
         return Y
@@ -112,7 +104,7 @@ class Transformer(torch.nn.Module):
     def __init__(self,
                  n_vocab=256,
                  max_ctx=1024,
-                 d_model=64,
+                 d_model=768,
                  n_heads=12,
                  d_ff=4096,
                  n_layers=12):
@@ -124,7 +116,7 @@ class Transformer(torch.nn.Module):
         self.d_ff = d_ff
         self.n_layers = n_layers
         self.input_embedding = Embedding(n_vocab, d_model)
-        self.positional_encoding = torch.nn.Parameter(0.02*torch.randn(max_ctx, d_model))
+        #self.positional_encoding = torch.nn.Parameter(0.02*torch.randn(max_ctx, d_model))
         self.layers = ModuleList([TransformerLayer(d_model, n_heads, d_ff)
                                   for _ in range(n_layers)])
         self.decoder = Linear(d_model, n_vocab)
@@ -152,7 +144,7 @@ class Transformer(torch.nn.Module):
         n_ctx = X.shape[-2]
         assert n_ctx <= self.max_ctx
         # Now X has shape [..., n_ctx, d_model] and Y has shape [..., n_ctx]
-        X = X + self.positional_encoding[...,-n_ctx:,:]
+        #X = X + self.positional_encoding[...,-n_ctx:,:]
         for layer in self.layers:
             X = layer(X)
         X = self.decoder(X)
@@ -164,10 +156,12 @@ class Transformer(torch.nn.Module):
             return EX/sumEX
         else:
             # Per example, per token crossentropy loss
+            half = n_ctx // 2
+            X = X[...,half:,:]
+            Y = Y[...,half:]
             EX = torch.exp(X)
             logsumEX = torch.log(torch.sum(torch.exp(X),dim=-1)).view(-1)
             chosen = torch.index_select(X.view(-1,self.n_vocab),-1,Y.view(-1))
-            #print('crossentropyloss', logsumEX.shape, chosen.shape)
             return (logsumEX - chosen)/math.log(2)
 
     def probs(self, X):
