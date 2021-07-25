@@ -73,12 +73,34 @@ class Sonny(Optimizer):
         self.state['step'] += 1
         self.state['stats']['loss'].step([mean_loss*examples, mean_sqr_loss*examples, examples])
         for (idx, p) in enumerate(self.params()):
+            if torch.any(torch.isnan(p.grad.data)):
+                raise RuntimeError(f"Sonny.step: Detected nan in p.grad.data.")
             self.state[idx]['ema_grad'].step(p.grad.data)
             self.state[idx]['ema_sqr_grad'].step(p.grad.data**2)
+            if torch.any(torch.isnan(self.state[idx]['ema_grad']())):
+                raise RuntimeError(f"Sonny.step: Detected nan in self.state[{idx}]['ema_grad'].")
+            if torch.any(torch.isnan(self.state[idx]['ema_sqr_grad']())):
+                raise RuntimeError(f"Sonny.step: Detected nan in self.state[{idx}]['ema_sqr_grad'].")
         bias_correction1 = 1 - self.state['beta1'] ** self.state['step']
         bias_correction2 = 1 - self.state['beta2'] ** self.state['step']
         for (idx, p) in enumerate(self.params()):
-            v = ((self.state[idx]['ema_grad']()/bias_correction1)/
-                 (torch.sqrt(self.state[idx]['ema_sqr_grad']()/bias_correction2)+self.state['eps']))
+            corrected_ema_grad = self.state[idx]['ema_grad']()/bias_correction1
+            if torch.any(torch.isnan(corrected_ema_grad)):
+                raise RuntimeError(f"Sonny.step: Detected nan in corrected_ema_grad.")
+            corrected_ema_sqr_grad = self.state[idx]['ema_sqr_grad']()/bias_correction2
+            if torch.any(torch.isnan(corrected_ema_sqr_grad)):
+                raise RuntimeError(f"Sonny.step: Detected nan in corrected_ema_sqr_grad.")
+            if torch.any(corrected_ema_sqr_grad < 0.0):
+                raise RuntimeError(f"Sonny.step: Detected negative entry in corrected_ema_sqr_grad.")
+            denominator = torch.sqrt(corrected_ema_sqr_grad) + self.state['eps']
+            if torch.any(torch.isnan(denominator)):
+                raise RuntimeError(f"Sonny.step: Detected nan in denominator.")
+            if torch.any(denominator <= 0.0):
+                raise RuntimeError(f"Sonny.step: Detected non-positive entry in denominator.")
+            v = corrected_ema_grad / denominator
+            if torch.any(torch.isnan(v)):
+                raise RuntimeError(f"Sonny.step: Detected nan in v.")
             p.data -= self.state['lr']*(v + self.state['weight_decay'] * p.data)
+            if torch.any(torch.isnan(p.data)):
+                raise RuntimeError(f"Sonny.step: Detected nan in p.data.")
         return (mean_loss, mean_sqr_loss, examples)

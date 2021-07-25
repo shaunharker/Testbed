@@ -85,13 +85,18 @@ class Worker(ctx.Process):
                     break
                 self.step += 1
                 try:
-                    self.compute_energy += self.model.compute_energy() * self.batch_size
+                    self.compute_energy += self.model.compute_energy(self.dataset.example_length) * self.batch_size
                 except:
                     self.compute_energy += 0 # not implemented for model, so return 0.
+                try:
+                    self.compute_data = self.model.compute_data()
+                except:
+                    self.compute_data = {}
                 self.consumed_examples += num_examples
                 step_info = {'step': self.step,
                              'compute_time': self.compute_time + stopwatch.time_elapsed,
                              'compute_energy': self.compute_energy,
+                             'compute_data': self.compute_data,
                              'mean_loss': mean_loss,
                              'var_loss': var_loss,
                              'consumed_examples': self.consumed_examples}

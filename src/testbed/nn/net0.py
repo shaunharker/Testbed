@@ -40,7 +40,7 @@ class Net0(Module):
     def name(self):
         return f"Net0({self.num_input_classes},{self.embedding_dim},{self.context_length},{self.num_hidden},{self.num_output_classes},{self.nonlinearity})"
 
-    def compute_energy(self):
+    def compute_energy(self, example_length=None):
         return 3.0*(self.embedding_dim*self.context_length*self.num_hidden + self.num_hidden*self.num_output_classes + self.num_hidden + self.num_output_classes)/1.0E12
 
 #    @autocast()
