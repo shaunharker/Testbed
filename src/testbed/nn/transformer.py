@@ -1,5 +1,6 @@
 import math
 import torch
+from functools import lru_cache
 import torch.nn.functional as F
 from time import time
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Dropout, Embedding, Linear, CrossEntropyLoss, Softmax, LayerNorm, ModuleList
@@ -7,7 +8,7 @@ from torch.cuda.amp import autocast
 
 class MyLayerNorm(LayerNorm):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, eps=1e-4, **kwargs)
         self.energy = 0.0
         self.compute_time = 0.0
 
@@ -15,8 +16,8 @@ class MyLayerNorm(LayerNorm):
     def forward(self, x):
         start_time = time()
         result = super().forward(x)
-        torch.cuda.synchronize()
-        self.energy += 3.0 * 6.0 * torch.numel(x) # ?
+        #torch.cuda.synchronize()
+        self.energy += 6.0 * torch.numel(x) # ?
         self.compute_time += time() - start_time
         return result
 
@@ -25,26 +26,40 @@ class MyLayerNorm(LayerNorm):
                 "time": self.compute_time,
                 "energy": self.energy}
 
-class MyLinear(Linear):
+class MyLinear(torch.nn.Module):
     def __init__(self, in_features, out_features):
-        super().__init__(in_features=in_features,
-                         out_features=out_features)
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = torch.nn.Parameter(torch.randn(in_features, out_features)*.02)
+        self.bias = torch.nn.Parameter(torch.zeros(out_features))
         self.energy = 0.0
         self.compute_time = 0.0
 
     @autocast()
     def forward(self, x):
         start_time = time()
-        result = super().forward(x)
-        torch.cuda.synchronize()
-        self.energy += self.out_features * torch.numel(x)
+        y = x @ self.weight + self.bias
+        #torch.cuda.synchronize()
+        self.energy += self.out_features * torch.numel(x) + torch.numel(y)
         self.compute_time += time() - start_time
-        return result
+        return y
 
     def compute_data(self):
         return {"name": "MyLinear",
                 "time": self.compute_time,
                 "energy": self.energy}
+
+@lru_cache
+def additive_lt_mask(n_ctx, device):
+    """
+    #   get_square_tril_mask returns a torch.Tensor with shape [n_ctx, n_ctx]
+    #   defined by:
+    #
+    #     additive_mask[i,j] := | 0.0    if i >= j
+    #                           | -inf   otherwise
+    """
+    return 1.0-1.0/torch.tril(torch.ones(n_ctx,n_ctx, device=device))
 
 class MultiHeadSelfAttention(torch.nn.Module):
     def __init__(self, d_model, n_heads):
@@ -60,9 +75,11 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.output_projection = MyLinear(d_v * n_heads, d_model)
         self.compute_time = 0.0
         self.energy = 0.0
+        self.softmax = torch.nn.Softmax(dim=-1)
         self.data = {"preamble": {"time": 0.0, "energy": 0.0},
                      "split_heads": {"time": 0.0, "energy": 0.0},
                      "matmul(Q,K^T)": {"time": 0.0, "energy": 0.0},
+                     "masking_attention": {"time": 0.0, "energy": 0.0},
                      "compute_attention": {"time": 0.0, "energy": 0.0},
                      "matmul(A,V)": {"time": 0.0, "energy": 0.0},
                      "merge_heads": {"time": 0.0, "energy": 0.0}}
@@ -89,7 +106,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
         input: X has shape [..., n_ctx, d_model]
         output: has shape [..., n_ctx, d_model]
         """
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
         start_time = time()
         t = time()
         input_shape = X.shape
@@ -112,53 +129,49 @@ class MultiHeadSelfAttention(torch.nn.Module):
         K = self.key_projection(X)
         V = self.value_projection(X)
 
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
 
         t = time()
         Q = split_heads(Q)
         K = split_heads(K)
         V = split_heads(V)
-        torch.cuda.synchronize()
-        self.data["split_heads"]["energy"] += 3.0 * (torch.numel(Q) + torch.numel(K) + torch.numel(V))
+        #torch.cuda.synchronize()
+        self.data["split_heads"]["energy"] += torch.numel(Q) + torch.numel(K) + torch.numel(V)
         self.data["split_heads"]["time"] += time() - t
 
 
         t = time()
-        QKT = torch.matmul(Q, K.transpose(-1,-2))
-        torch.cuda.synchronize()
-        self.data["matmul(Q,K^T)"]["energy"] += 3.0 * (torch.numel(Q) * n_ctx)
+        QKT = torch.matmul(Q/math.sqrt(d_head), K.transpose(-1,-2))
+        #torch.cuda.synchronize()
+        self.data["matmul(Q,K^T)"]["energy"] += torch.numel(Q) * n_ctx
         self.data["matmul(Q,K^T)"]["time"] += time() - t
 
         t = time()
-        additive_mask = 1.0-1.0/torch.tril(torch.ones(n_ctx,n_ctx, device=X.device))
-        # The expected behavior of the last line is:
-        #   additive_mask has shape [n_ctx, n_ctx] and is defined by
-        #   additive_mask[i,j] := | 0.0    if i >= j
-        #                         | -inf   otherwise
-        Z = torch.tril(QKT/math.sqrt(d_head)) + additive_mask
-        (Zmax, _) = torch.max(Z,dim=-1,keepdim=True)
-        Z = Z - Zmax # as in GPT-2
-        EZ = torch.exp(Z)
-        sumEZ = torch.sum(EZ,dim=-1,keepdim=True)
-        A = EZ/sumEZ
-        torch.cuda.synchronize()
-        self.data["compute_attention"]["energy"] += 3.0 * 8.0 * (torch.numel(A)) # ?
+        Z = QKT + additive_lt_mask(n_ctx, device=QKT.device)
+        #torch.cuda.synchronize()
+        self.data["masking_attention"]["energy"] += 4.0 * (torch.numel(Z)) # ?
+        self.data["masking_attention"]["time"] += time() - t
+
+        t = time()
+        A = self.softmax(Z)
+        #torch.cuda.synchronize()
+        self.data["compute_attention"]["energy"] += 5.0 * (torch.numel(A)) # ?
         self.data["compute_attention"]["time"] += time() - t
 
         t = time()
         AV = torch.matmul(A,V)
-        torch.cuda.synchronize()
-        self.data["matmul(A,V)"]["energy"] += 3.0 * (torch.numel(A) * d_head)
+        #torch.cuda.synchronize()
+        self.data["matmul(A,V)"]["energy"] += torch.numel(A) * d_head
         self.data["matmul(A,V)"]["time"] += time() - t
 
         t = time()
-        AV = merge_heads(AV)
-        torch.cuda.synchronize()
-        self.data["merge_heads"]["energy"] += 3.0 * (torch.numel(AV))
+        mergedAV = merge_heads(AV)
+        #torch.cuda.synchronize()
+        self.data["merge_heads"]["energy"] += torch.numel(AV)
         self.data["merge_heads"]["time"] += time() - t
 
-        Y = self.output_projection(AV)
-        torch.cuda.synchronize()
+        Y = self.output_projection(mergedAV)
+        #torch.cuda.synchronize()
         self.compute_time += time() - start_time
         return Y
 
@@ -193,7 +206,7 @@ class FeedForward(torch.nn.Module):
         x = self.layer0(x)
         x = self.nonlinear(x)
         x = self.layer1(x)
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
         self.compute_time += time() - start_time
         return x
 
@@ -222,7 +235,7 @@ class TransformerLayer(torch.nn.Module):
         start_time = time()
         x = x + self.multiheadselfattention(x)
         x = x + self.feedforward(x)
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
         self.compute_time += time() - start_time
         return x
 
@@ -236,18 +249,21 @@ class MyEmbedding(torch.nn.Module):
         # TODO: figure out why 1.00 instead of 0.01 causes a nan in gradient
         # for transformer
         self.compute_time = 0.0
+        self.energy = 0.0
 
     def compute_data(self):
         data = {"name": "MyEmbedding",
                 "time": self.compute_time,
-                "energy": 0.0}  #TODO
+                "energy": self.energy}
         return data
 
+    @autocast()
     def forward(self, x):
         start_time = time()
         shape = x.shape + (self.d_model,)
         result = torch.index_select(self.weight, 0, x.view(-1)).view(shape)
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
+        self.energy += torch.numel(result)
         self.compute_time += time() - start_time
         return result
 
@@ -275,7 +291,9 @@ class Transformer(torch.nn.Module):
         self.layers = ModuleList([TransformerLayer(d_model, n_heads, d_ff)
                                   for _ in range(n_layers)])
         self.layernorm = MyLayerNorm(d_model)
-        #self.decoder = Linear(d_model, n_vocab)
+        self.lm_head = Linear(d_model, n_vocab)
+        self.softmax = torch.nn.Softmax(dim=-1)
+        self.criterion = CrossEntropyLoss(reduction='none')
         self.compute_time = 0.0
 
     def compute_data(self):
@@ -289,22 +307,6 @@ class Transformer(torch.nn.Module):
         data["energy"] = (sum(layerdata["energy"] for layerdata in data["children"]["layers"]) +
                           data["children"]["layernorm"]["energy"])
         return data
-
-    def compute_energy(self, L):
-        d_model = self.d_model
-        n_heads = self.n_heads
-        d_ff = self.d_ff
-        n_vocab = self.n_vocab
-        n_layers = self.n_layers
-        d_head = d_model // n_heads
-        embedding_cost = d_model * (L-1)
-        layernorm_cost = 4.0 * d_model * (L-1) # estimate
-        residual_cost = d_model * (L-1)
-        attention_cost = 2.0 * (L-1)**2 * d_head * n_heads + layernorm_cost + residual_cost
-        feedforward_cost = 2.0 * d_model * d_ff + layernorm_cost + residual_cost
-        layer_cost = attention_cost + feedforward_cost
-        decoder_cost = d_model * n_vocab * (L-1) + layernorm_cost
-        return (3.0*(embedding_cost + n_layers * layer_cost + decoder_cost))/1.0E12
 
     @autocast()
     def forward(self, X, probs=False):
@@ -334,14 +336,15 @@ class Transformer(torch.nn.Module):
         # Now X has shape [..., n_ctx, d_model] and Y has shape [..., n_ctx]
         if torch.any(torch.isnan(X)):
             raise RuntimeError(f"Transformer.forward: Detected nan after embedding.")
-        X = X + self.positional_encoding[...,-n_ctx:,:]
+        X = X + self.positional_encoding[...,:n_ctx,:]
         assert X.shape[-1] == self.d_model
         for (idx, layer) in enumerate(self.layers):
             X = layer(X)
             if torch.any(torch.isnan(X)):
                 raise RuntimeError(f"Transformer.forward: Detected nan after layer {idx}.")
         X = self.layernorm(X)
-        X = X @ self.input_embedding.weight.transpose(0,1)
+        X = self.lm_head(X)
+        #X = X @ self.input_embedding.weight.transpose(0,1)
         assert X.shape[-1] == self.n_vocab
         if torch.any(torch.isnan(X)):
             raise RuntimeError(f"Transformer.forward: Detected nan after decoding.")
@@ -351,18 +354,20 @@ class Transformer(torch.nn.Module):
         # Now X has shape [..., n_ctx, n_vocab] and Y has shape [..., n_ctx]
         if probs:
             # Softmax(dim=-1)
-            EX = torch.exp(X)
-            sumEX = torch.sum(EX,dim=-1,keepdim=True)
-            result = EX/sumEX
+            # EX = torch.exp(X)
+            # sumEX = torch.sum(EX,dim=-1,keepdim=True)
+            # result = EX/sumEX
+            result = self.softmax(X)
         else:
             # Per example, per token crossentropy loss
-            EX = torch.exp(X)
-            logsumEX = torch.log(torch.sum(EX,dim=-1)).view(-1)
-            chosen = torch.index_select(X.view(-1,self.n_vocab),-1,Y.view(-1))
-            result = (logsumEX - chosen)/math.log(2)
+            # EX = torch.exp(X)
+            # logsumEX = torch.log(torch.sum(EX,dim=-1)).view(-1)
+            # chosen = torch.index_select(X.view(-1,self.n_vocab),-1,Y.view(-1))
+            # result = (logsumEX - chosen)/math.log(self.n_vocab)
+            result = self.criterion(X.view(-1,self.n_vocab),Y.view(-1))/math.log(self.n_vocab)
         if torch.any(torch.isnan(result)):
             raise RuntimeError(f"Transformer.forward: Detected nan after criterion.")
-        torch.cuda.synchronize()
+        #torch.cuda.synchronize()
         self.compute_time += time() - start_time
         return result
 

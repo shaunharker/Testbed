@@ -7,6 +7,11 @@ from pathlib import Path
 import numpy as np
 import threading
 
+def load_corpus_bytes(filename='/home/sharker/data/corpus.utf8.txt'):
+    with open(filename, 'rb') as infile:
+        data = infile.read()
+    return data
+
 class TextDataset:
     def __init__(self,
                  filename='/home/sharker/data/corpus.utf8.txt',
@@ -61,12 +66,22 @@ class TextDataset:
             offset = self.dataline_size * randrange((self.file_length-self.dataline_size)//self.dataline_size)
         else:
             offset = (line_no * self.dataline_size) % len(self)
-        return np.fromfile(
-                    self.filename,
-                    dtype=np.ubyte,
-                    count=self.dataline_size,
-                    sep='',
-                    offset=offset)
+        try:
+            result = np.fromfile(
+                self.filename,
+                dtype=np.ubyte,
+                count=self.dataline_size,
+                sep='',
+                offset=offset)
+        except:
+            self.filename = "/home/ubuntu/data/corpus.utf8.txt"
+            result = np.fromfile(
+                self.filename,
+                dtype=np.ubyte,
+                count=self.dataline_size,
+                sep='',
+                offset=offset)
+        return result
 
     def _cache_lines(self, num_lines=2**10):
         newdata = (

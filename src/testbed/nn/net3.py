@@ -29,7 +29,7 @@ class Net3(Module):
     def name(self):
         return f"Net3({self.embedding_dim},{self.context_length},{self.num_hidden1},{self.num_hidden2})"
 
-    def compute_energy(self, example_length=None):
+    def compute_energy(self):
         return 3.0*(self.embedding_dim*self.context_length*self.num_hidden1 +
                     self.num_hidden1*self.num_hidden2 +
                     self.num_hidden2*self.num_output_classes +

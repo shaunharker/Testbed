@@ -33,7 +33,8 @@ class Sonny(Optimizer):
                  beta1=0.9,
                  beta2=0.999,
                  eps=1e-8,
-                 weight_decay=0.01):
+                 weight_decay=0.01,
+                 warmup = 10000):
         if not 0.0 <= lr:
             raise ValueError(f"Invalid lr value: {lr}")
         if not 0.0 <= beta1 < 1.0:
@@ -51,6 +52,7 @@ class Sonny(Optimizer):
         self.state['eps'] = eps
         self.state['weight_decay'] = weight_decay
         self.state['step'] = 0
+        self.state['warmup'] = warmup
         self.closure = None
 
     def params(self):
@@ -76,31 +78,20 @@ class Sonny(Optimizer):
             if torch.any(torch.isnan(p.grad.data)):
                 raise RuntimeError(f"Sonny.step: Detected nan in p.grad.data.")
             self.state[idx]['ema_grad'].step(p.grad.data)
-            self.state[idx]['ema_sqr_grad'].step(p.grad.data**2)
-            if torch.any(torch.isnan(self.state[idx]['ema_grad']())):
-                raise RuntimeError(f"Sonny.step: Detected nan in self.state[{idx}]['ema_grad'].")
-            if torch.any(torch.isnan(self.state[idx]['ema_sqr_grad']())):
-                raise RuntimeError(f"Sonny.step: Detected nan in self.state[{idx}]['ema_sqr_grad'].")
+            p.grad.data.square_()
+            self.state[idx]['ema_sqr_grad'].step(p.grad.data)
         bias_correction1 = 1 - self.state['beta1'] ** self.state['step']
         bias_correction2 = 1 - self.state['beta2'] ** self.state['step']
+        # learning rate schedule TODO: make generic
+        if self.state['step'] <= self.state['warmup'] :
+            stepsize = self.state['lr']*self.state['step']/self.state['warmup']
+        else:
+            stepsize = self.state['lr']*self.state['warmup']/self.state['step']
         for (idx, p) in enumerate(self.params()):
-            corrected_ema_grad = self.state[idx]['ema_grad']()/bias_correction1
-            if torch.any(torch.isnan(corrected_ema_grad)):
-                raise RuntimeError(f"Sonny.step: Detected nan in corrected_ema_grad.")
-            corrected_ema_sqr_grad = self.state[idx]['ema_sqr_grad']()/bias_correction2
-            if torch.any(torch.isnan(corrected_ema_sqr_grad)):
-                raise RuntimeError(f"Sonny.step: Detected nan in corrected_ema_sqr_grad.")
-            if torch.any(corrected_ema_sqr_grad < 0.0):
-                raise RuntimeError(f"Sonny.step: Detected negative entry in corrected_ema_sqr_grad.")
-            denominator = torch.sqrt(corrected_ema_sqr_grad) + self.state['eps']
-            if torch.any(torch.isnan(denominator)):
-                raise RuntimeError(f"Sonny.step: Detected nan in denominator.")
-            if torch.any(denominator <= 0.0):
-                raise RuntimeError(f"Sonny.step: Detected non-positive entry in denominator.")
-            v = corrected_ema_grad / denominator
-            if torch.any(torch.isnan(v)):
-                raise RuntimeError(f"Sonny.step: Detected nan in v.")
-            p.data -= self.state['lr']*(v + self.state['weight_decay'] * p.data)
-            if torch.any(torch.isnan(p.data)):
-                raise RuntimeError(f"Sonny.step: Detected nan in p.data.")
+            G = self.state[idx]['ema_grad']()/bias_correction1
+            G2 = self.state[idx]['ema_sqr_grad']()/bias_correction2
+            torch.sqrt_(G2).add_(self.state['eps']) # G2 = torch.sqrt(G2) + self.state['eps']
+            G.div_(G2).add_(p.data,alpha=self.state['weight_decay'])
+            p.data.sub_(G,alpha=stepsize)
+
         return (mean_loss, mean_sqr_loss, examples)

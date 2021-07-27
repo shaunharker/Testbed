@@ -1,7 +1,7 @@
 import torch
 from sortedcontainers import SortedList
 import numpy as np
-            
+
 # Accumulation Tracking Structure
 
 class Accumulator:
@@ -25,7 +25,7 @@ class EMA:
         if self.x is None:
             self.x = x
         else:
-            self.x = self.param*self.x + (1-self.param)*x
+            self.x.mul_(self.param).add_(x, alpha=1-self.param) # self.x = self.param*self.x + (1-self.param)*x
         return self.x
 
     def __call__(self):

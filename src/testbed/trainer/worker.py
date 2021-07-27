@@ -64,11 +64,9 @@ class Worker(ctx.Process):
 
     def train(self):
         print(f"{self.step}. Entering training loop.")
-        print(f"{self.step}. self.compute_time = {self.compute_time}")
-        print(f"{self.step}. self.batch_size = {self.batch_size}")
-        print(f"{self.step}. self.dataset.example_length = {self.dataset.example_length}")
-        print(f"{self.step}. There are {len(self.dataset)} examples in self.dataset.")
-        print(f"{self.step}. They will be looped through repeatedly until interrupted.")
+        print(f"{self.step}.   compute_time = {self.compute_time}")
+        print(f"{self.step}.   batch_size = {self.batch_size}")
+        print(f"{self.step}.   example_length = {self.dataset.example_length}")
         with Stopwatch() as stopwatch:
             # Try to tune the optimizer if it has this feature
             try:
@@ -85,11 +83,13 @@ class Worker(ctx.Process):
                     break
                 self.step += 1
                 try:
-                    self.compute_energy += self.model.compute_energy(self.dataset.example_length) * self.batch_size
+                    self.compute_energy += self.model.compute_energy() * self.batch_size
                 except:
                     self.compute_energy += 0 # not implemented for model, so return 0.
                 try:
                     self.compute_data = self.model.compute_data()
+                    if "energy" in self.compute_data:
+                        self.compute_energy = self.compute_data["energy"]/1.0E12
                 except:
                     self.compute_data = {}
                 self.consumed_examples += num_examples

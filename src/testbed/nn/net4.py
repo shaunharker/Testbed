@@ -37,7 +37,7 @@ class Net4(Module):
     def name(self):
         return f"Net4({self.num_input_classes},{self.embedding_dim},{self.context_length},{self.num_hidden},{self.num_output_classes},{self.nonlinearity})"
 
-    def compute_energy(self, example_length=None):
+    def compute_energy(self):
         encoder_cost = 3.0*self.embedding_dim*self.context_length*self.num_hidden
         normalization_cost = 3.0*self.num_hidden ## this is an underestimate, TODO FIX
         decoder_cost = 3.0*(self.num_hidden*self.num_output_classes + self.num_output_classes)
