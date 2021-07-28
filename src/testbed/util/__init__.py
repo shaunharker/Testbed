@@ -4,6 +4,29 @@ from .ignorekeyboardinterrupt import IgnoreKeyboardInterrupt
 from .reporter import Reporter
 from .stopwatch import Stopwatch
 
+from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
+nvmlInit()
+
+def memory_allocated():
+    return torch.cuda.memory_allocated(0)
+
+def memory_free():
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    f1 = r-a  # free inside reserved
+    f2 = nvmlDeviceGetMemoryInfo(nvmlDeviceGetHandleByIndex(0)).free
+    return f1 + f2
+
+@lru_cache
+def memory_usage(f, shape):
+    x = torch.zeros(shape, device='cuda')
+    a0 = memory_allocated()
+    y = f(x)
+    usage = memory_allocated() - a0
+    del y
+    del x
+    return usage
+    
 def decode_broken_utf8(s):
     def charsize(b):
         if b&128 == 0:
@@ -46,7 +69,7 @@ def construct_if_required(x):
     """
     Used for handling inputs of Maybe-Constructed things.
     A Maybe-Constructed thing is either:
-    1. A dictionary of the form 
+    1. A dictionary of the form
 
         {"type": T,
          "args": args, # optional

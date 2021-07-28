@@ -12,19 +12,58 @@ class Trainer:
 
     Args:
 
-      path_or_config: the path of a checkpoint or else
-                      a configuration dictionary of the form:
+    Supply exactly one of the following arguments:
 
-        {"model": {"type": ModelType, "kwargs": model_kwargs},
-         "dataset": {"type": DatasetType, "kwargs": dataset_kwargs},
-         "optimizer": {"type": OptimizerType, "kwargs": optimizer_kwargs},
-         "scheduler": {"type": SchedulerType, "kwargs": scheduler_kwargs}}
+        path: the path of a checkpoint
+
+    or
+
+        config: a configuration dictionary of the form:
+
+    Example:
+
+        config = {
+            "model": {
+                "type": ModelType,
+                "kwargs": model_kwargs},
+            "dataset": {
+                "type": DatasetType,
+                "kwargs": dataset_kwargs},
+            "optimizer": {
+                "type": OptimizerType,
+                "kwargs": optimizer_kwargs},
+            "batch_size": batch_size,
+            "example_length": example_length}
+
+        trainer = Trainer(config)
 
     """
-    def __init__(self, path_or_config=None):
-        # communication
+    def __init__(self, path=None, config=None):
+        # Check arguments and compute arguments for
+        # worker.
+        if path is None and config is None:
+            raise ValueError("Trainer requires either a path or "
+                             "a config argument.")
+        if path is not None and config is not None:
+            raise ValueError("Trainer accepts either a path or "
+                             "a config argument, but not both.")
+        bootargs = {}
+        if path is not None:
+            bootargs.update({"path": path})
+        if config is not None:
+            assert "model" in config
+            assert "optimizer" in config
+            assert "dataset" in config
+            assert "batch_size" in config
+            assert "example_length" in config
+            bootargs.update({"config": config})
+
+        # main inbox/output communication channels:
         self.inbox = Queue()
         self.outbox = Queue()
+
+        # The next four lines set up an inbox that is continually
+        # emptied into self.metrics:
 
         # self.metrics is a list that stores data for the client to use.
         self.metrics = []
@@ -44,14 +83,13 @@ class Trainer:
         #   called when the trainer is garbage collected.
         self.halt_metrics_inbox_daemon = threading.Event()
 
-        self.path_or_config = path_or_config
-        if self.path_or_config is None:
-            raise ValueError("Trainer requires either a path or a config argument.")
+        # Boot up the worker. It will be in a "paused" state.
         self.process = Worker(self.outbox, self.inbox, self.metrics_inbox)
         self.process.start()
         self.inbox.get() # blocks until process is ready
         self.paused = True
-        self.call("boot", path_or_config=self.path_or_config)
+
+        self.call("boot", **bootargs)
 
     def __del__(self):
         self.halt_metrics_inbox_daemon.set()
@@ -101,7 +139,10 @@ class Trainer:
         self.outbox.put({"instruction": instruction,
                          "kwargs": kwargs})
         result = self.inbox.get() # blocks
+
+        # If the trainer was not paused to begin, then resume:
         if self.paused == False:
-            self.outbox.put({"instruction": "start"})
-            self.inbox.get()
+            self.paused = True # prevents infinite recursion
+            self.call("start")
+            self.paused = False
         return result

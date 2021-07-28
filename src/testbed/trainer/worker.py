@@ -2,14 +2,14 @@ import gc
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
 from queue import Empty
-from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device
+from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_allocated
 import time
 import json
 
-class InstructionInterrupt(Exception):
-    def __init__(self, instruction):
+class JobInterrrupt(Exception):
+    def __init__(self, job):
         super().__init__()
-        self.instruction = instruction
+        self.job = job
 
 class Worker(ctx.Process):
     def __init__(self, inbox, outbox, metrics_outbox):
@@ -22,8 +22,11 @@ class Worker(ctx.Process):
         self.model = None
         self.dataset = None
         self.optimizer = None
-        self.scheduler = None
+        self.batch_size = None
+        self.example_length = None
 
+        self.minibatches = None
+        self.minibatch_size = None
         self.step = 0
         self.info = {
             "name": "Worker",
@@ -47,50 +50,48 @@ class Worker(ctx.Process):
         print(json.dumps(log_message))
 
     def closure(self):
-        self.minibatches *= 2
-        self.minibatch_size = self.batch_size // self.minibatches
         while True:
             try:
                 return self._closure()
-            except RuntimeError as err: # CUDA OOM
-                gc.collect()
-                torch.cuda.empty_cache()
-                self.log(f"Closure computation experienced RuntimeError {err}.")
-                self.minibatches *= 2
-                self.minibatch_size = self.batch_size // self.minibatches
-                if self.minibatch_size == 0:
-                    raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
-                self.log(f"{self.step}. Splitting batch of {self.batch_size} examples into {self.minibatches} of {self.minibatch_size} examples.")
+            except RuntimeError as e: # CUDA OOM
+                if "CUDA out of memory" in str(e):
+                    self.minibatches *= 2
+                    self.minibatch_size = self.batch_size // self.minibatches
+                    if self.minibatch_size == 0:
+                        raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
+                    self.log(f"Splitting batch of {self.batch_size} examples into "
+                             f"{self.minibatches} minibatches of size {self.minibatch_size} "
+                             "due to memory constraints.\n"
+                             "The results will not be affected.")
+                else:
+                    raise e
 
     def _closure(self):
-        num_examples = 0
         if torch.is_grad_enabled():
             self.optimizer.zero_grad()
         Y = []
         for _ in range(self.minibatches):
             try:
-                instruction = self.inbox.get(False)
-                if instruction != "start":
-                    self.log(f"{self.step}. Interrupted by instruction '{instruction}'.")
-                    raise InstructionInterrupt(instruction)
+                job = self.inbox.get(False)
+                if job["instruction"] != "start":
+                    raise JobInterrrupt(job)
+                else:
+                    self.outbox.put("already started")
             except Empty:
                 pass
-            X = self.loader.batch(batch_size=self.minibatch_size).to(device='cuda',dtype=torch.long, non_blocking=True)
+            X = (self.dataset.batch(
+                    example_length=self.example_length,
+                    batch_size=self.minibatch_size)
+                .to(device='cuda',
+                    dtype=torch.long,
+                    non_blocking=True))
             batch_losses = self.model(X)
             if torch.is_grad_enabled():
                 loss = torch.sum(batch_losses)/torch.numel(batch_losses)
                 loss.backward()
-            num_examples += torch.numel(batch_losses)
             Y.append(batch_losses.detach())
-            if torch.any(torch.isnan(batch_losses)):
-                raise RuntimeError("1nan")
         Y = torch.cat(Y)
-
-        if torch.any(torch.isnan(Y)):
-            raise RuntimeError("2nan")
-        mean_loss = torch.mean(Y).item()
-        mean_sqr_loss = torch.mean(Y*Y).item()
-        return (mean_loss, mean_sqr_loss, num_examples)
+        return Y.numpy()
 
     def train(self):
         self.log("train")
@@ -99,43 +100,43 @@ class Worker(ctx.Process):
                 if not self.parent.is_alive():
                     raise RuntimeError("Parent process is not alive.")
                 try:
-                    loss_statistics = self.optimizer.step(self.closure)
-                except InstructionInterrupt as e:
-                    instruction = e.instruction
+                    batch_losses = self.optimizer.step(self.closure)
+                except JobInterrrupt as e:
+                    job = e.job
                     break
                 self.step += 1
-
-                self.info["model"] = self.model.profile()
-                self.info["energy"] = self.info["model"]["energy"]
-                self.info["ingest"] += self.scheduler.batch_size * self.scheduler.example_length
+                self.info["energy"] = self.model.profile()["energy"]
+                # TODO: don't neglect optimizer costs
+                self.info["ingest"] += self.batch_size * self.example_length
                 step_info = {'step': self.step,
                              'time': self.info["time"] + stopwatch.time_elapsed,
                              'energy': self.info["energy"]/1E12,
                              'ingest': self.info["ingest"],
                              'profile': self.info,
-                             'loss_statistics': loss_statistics}
+                             'batch_losses': batch_losses}
                 self.metrics.append(step_info)
                 self.metrics_outbox.put(step_info)
         self.info["time"] += stopwatch.total_run_time
-        self.log(f"InstructionInterrupt({instruction})")
-        return instruction
+        self.log(f"JobInterrrupt({job})")
+        return job
 
     def run(self):
         self.log(f"Worker.run")
+        self.minibatches = 1
         self.outbox.put("ready")
         job = self.inbox.get()
         instruction = job["instruction"]
         assert instruction == "boot"
-        if "path" in job:
-            self.path = job["path"]
-            make = lambda x: x["type"](**x["kwargs"])
-            self.model = make(self.path["model"])
-            self.optimizer = make(self.path["optimizer"])
-            self.dataset = make(self.path["dataset"])
-            self.scheduler = make(self.path["scheduler"])
-        elif "config" in job:
+        if "config" in job:
             self.config = job["config"]
-            self.load(self.config)
+            make = lambda x: x["type"](**x["kwargs"])
+            self.model = make(self.config["model"])
+            self.optimizer = make(self.config["optimizer"])
+            self.dataset = make(self.config["dataset"])
+            self.batch_size = self.config["batch_size"]
+            self.example_length = self.config["example_length"]
+        elif "path" in job:
+            self.load(job["path"])
         else:
             raise RuntimeError("Invalid job")
 
@@ -149,6 +150,7 @@ class Worker(ctx.Process):
                     result = self.dispatch(job["instruction"],
                                            job["kwargs"])
                     self.outbox.put(result)
+
                     if job["instruction"] == "stop":
                         break
                 except Empty:
@@ -158,14 +160,19 @@ class Worker(ctx.Process):
         self.log("terminate")
 
     def dispatch(self, instruction, kwargs):
-        self.log(f"dispatch({instruction}")
+        self.log(f"dispatch({instruction, kwargs}")
         if instruction == "start":
             self.log("start")
-            instruction = self.train()
-            # ... and then case fall-through for whatever it returns.
+            self.outbox.put("started")
+            job = self.train()
+            instruction = job["instruction"]
+            kwargs = job["kwargs"]
+            assert instruction != "start"
+            # ... and then case fall-through to handle
+            #     the job that train was interrupted by
         if instruction == "stop":
             self.log("stop")
-            return None
+            return "stopped"
         if instruction == "update":
             entity = kwargs["entity"]
             settings = kwargs["settings"]
@@ -175,31 +182,38 @@ class Worker(ctx.Process):
             return self.fetch(entity)
         if instruction == "save":
             path = kwargs["path"]
-            return self.save(path)
+            self.save(path)
+            return "saved"
         if instruction == "pause":
+            self.log("pause")
             return "paused"
 
     def update(self, entity, settings):
         self.log(f"update({entity},{settings})")
         if entity == "model":
             self.model.update(settings)
+            return self.model.settings
         if entity == "optimizer":
             self.optimizer.update(settings)
+            return self.optimizer.settings
         if entity == "dataset":
             self.dataset.update(settings)
-        if entity == "scheduler":
-            self.scheduler.update(settings)
+            return self.dataset.settings
+        if entity == "batch_size":
+            self.batch_size = settings
+            return self.batch_size
+        if entity == "example_length":
+            self.example_length = settings
+            return self.example_length
 
     def fetch(self, entity):
         self.log(f"fetch({entity})")
         if entity == "model":
-            return None # TODO
+            return 0 # TODO
         if entity == "optimizer":
-            return None # TODO
+            return 0 # TODO
         if entity == "dataset":
-            return None # TODO
-        if entity == "scheduler":
-            return None # TODO
+            return 0 # TODO
 
     def load(self, path):
         self.log(f"load({path})")
@@ -208,11 +222,13 @@ class Worker(ctx.Process):
         self.model = checkpoint["model"]
         self.dataset = make(checkpoint["dataset"])
         self.optimizer = checkpoint["optimizer"]
-        self.scheduler = checkpoint["scheduler"]
+        self.batch_size = checkpoint["batch_size"]
+        self.example_length = checkpoint["example_length"]
         self.step = checkpoint["step"]
         self.profile = checkpoint["profile"]
         self.metrics = checkpoint["metrics"]
         self.logs = checkpoint["logs"]
+        return "loaded"
 
     def save(self, path):
         self.log(f"save({path})")
@@ -222,9 +238,11 @@ class Worker(ctx.Process):
                 "type": type(self.dataset),
                 "kwargs": self.dataset.kwargs},
             "optimizer": self.optimizer,
-            "scheduler": self.scheduler,
+            "batch_size": self.batch_size,
+            "example_length": self.example_length,
             "step": self.step,
             "profile": self.profile(),
             "metrics": self.metrics,
             "logs": self.logs}
         torch.save(checkpoint, path)
+        return "saved"
