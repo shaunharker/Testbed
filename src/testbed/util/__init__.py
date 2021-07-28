@@ -41,3 +41,30 @@ def default_device():
 
 def numel(model):
     return sum(p.numel() for p in model.parameters())
+
+def construct_if_required(x):
+    """
+    Used for handling inputs of Maybe-Constructed things.
+    A Maybe-Constructed thing is either:
+    1. A dictionary of the form 
+
+        {"type": T,
+         "args": args, # optional
+         "kwargs": kwargs # optional}
+
+    from which we may construct the object
+
+        T(*args, **args),
+
+    which is returned, or
+    2. Anything else, which is returned unchanged.
+    """
+    if type(x) == dict:
+        try:
+            T = x["type"]
+            args = x["args"] if "args" in x else []
+            kwargs = x["kwargs"] if "kwargs" in x else {}
+            return T(*args, **kwargs)
+        except:
+            pass
+    return x

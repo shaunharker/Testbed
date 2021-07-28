@@ -1,4 +1,5 @@
 import numpy as np
+import gc
 import torch
 from torch.optim import AdamW
 from ..optim import Sonny
@@ -6,31 +7,61 @@ from ..data import Loader, TextDataset
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
 from queue import Empty
-from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device
+from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, construct_if_required
 import time
+import json
+
+class InstructionInterrupt(Exception):
+    def __init__(self, instruction):
+        super().__init__()
+        instruction = instruction
 
 class Worker(ctx.Process):
-    def __init__(self, inbox, outbox, loss_outbox):
+    def __init__(self, inbox, outbox, metrics_outbox):
         super().__init__(daemon=True)
         self.inbox = inbox
         self.outbox = outbox
-        self.loss_outbox = loss_outbox
+        self.metrics_outbox = metrics_outbox
+
+        self.model = None
+        self.dataset = None
+        self.optimizer = None
+        self.scheduler = None
         self.step = 0
-        self.compute_time = 0
-        self.compute_energy = 0
-        self.consumed_examples = 0
+        self.info = {
+            "name": "Worker",
+            "time": 0.0,
+            "energy": 0.0,
+            "data": 0.0,
+            "children": {
+                "model": {}}}
+        self.metrics = []
+        self.logs = []
+
+    def profile(self):
+        return self.info
+
+    def log(self, message):
+        log_message = {
+            "step": self.step,
+            "time": self.info["time"],
+            "message": message}
+        self.logs.append(log_message)
+        print(json.dumps(log_message))
 
     def closure(self):
         while True:
             try:
                 return self._closure()
-            except RuntimeError as err:
-                print(f"Closure computation experienced RuntimeError {err}.")
+            except RuntimeError as err: # CUDA OOM
+                gc.collect()
+                torch.cuda.empty_cache()
+                self.log(f"Closure computation experienced RuntimeError {err}.")
                 self.minibatches *= 2
                 self.minibatch_size = self.batch_size // self.minibatches
                 if self.minibatch_size == 0:
                     raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
-                print(f"{self.step}. Splitting batch of {self.batch_size} examples into {self.minibatches} of {self.minibatch_size} examples due to memory constraints. The computation will not be affected.")
+                self.log(f"{self.step}. Splitting batch of {self.batch_size} examples into {self.minibatches} of {self.minibatch_size} examples.")
 
     def _closure(self):
         num_examples = 0
@@ -39,10 +70,10 @@ class Worker(ctx.Process):
         Y = []
         for _ in range(self.minibatches):
             try:
-                self.instruction = self.inbox.get(False)
-                if self.instruction != "start":
-                    print(f"{self.step}. Interrupted by instruction '{self.instruction}'.")
-                    raise KeyboardInterrupt
+                instruction = self.inbox.get(False)
+                if instruction != "start":
+                    self.log(f"{self.step}. Interrupted by instruction '{instruction}'.")
+                    raise InstructionInterrupt(instruction)
             except Empty:
                 pass
             X = self.loader.batch(batch_size=self.minibatch_size).to(device='cuda',dtype=torch.long, non_blocking=True)
@@ -63,142 +94,110 @@ class Worker(ctx.Process):
         return (mean_loss, mean_sqr_loss, num_examples)
 
     def train(self):
-        print(f"{self.step}. Entering training loop.")
-        print(f"{self.step}.   compute_time = {self.compute_time}")
-        print(f"{self.step}.   batch_size = {self.batch_size}")
-        print(f"{self.step}.   example_length = {self.dataset.example_length}")
+        self.log("train")
         with Stopwatch() as stopwatch:
-            # Try to tune the optimizer if it has this feature
-            try:
-                self.optimizer.tune(self.closure)
-            except:
-                pass
             while True:
                 if not self.parent.is_alive():
                     raise RuntimeError("Parent process is not alive.")
                 try:
-                    (mean_loss, var_loss, num_examples) = self.optimizer.step(self.closure)
-                except KeyboardInterrupt:
-                    self.instruction = self.instruction
+                    loss_statistics = self.optimizer.step(self.closure)
+                except InstructionInterrupt as e:
+                    instruction = e.instruction
                     break
                 self.step += 1
-                try:
-                    self.compute_energy += self.model.compute_energy() * self.batch_size
-                except:
-                    self.compute_energy += 0 # not implemented for model, so return 0.
-                try:
-                    self.compute_data = self.model.compute_data()
-                    if "energy" in self.compute_data:
-                        self.compute_energy = self.compute_data["energy"]/1.0E12
-                except:
-                    self.compute_data = {}
-                self.consumed_examples += num_examples
+
+                self.info["model"] = self.model.profile()
+                self.info["energy"] = self.info["model"]["energy"]
+                self.info["ingest"] += self.scheduler.batch_size * self.scheduler.example_length
                 step_info = {'step': self.step,
-                             'compute_time': self.compute_time + stopwatch.time_elapsed,
-                             'compute_energy': self.compute_energy,
-                             'compute_data': self.compute_data,
-                             'mean_loss': mean_loss,
-                             'var_loss': var_loss,
-                             'consumed_examples': self.consumed_examples}
-                self.losses.append(step_info)
-                self.loss_outbox.put(step_info)
-        self.compute_time += stopwatch.total_run_time
-        print(f"{self.step}. Exiting training loop at time {self.compute_time}.")
-        return self.instruction # for clarity: this function only returns because it gets interrupted by an self.instruction
+                             'time': self.info["time"] + stopwatch.time_elapsed,
+                             'energy': self.info["energy"]/1E12,
+                             'ingest': self.info["ingest"],
+                             'profile': self.info,
+                             'loss_statistics': loss_statistics}
+                self.metrics.append(step_info)
+                self.metrics_outbox.put(step_info)
+        self.info["time"] += stopwatch.total_run_time
+        self.log(f"InstructionInterrupt({instruction})")
+        return instruction
 
     def run(self):
+        self.log(f"Worker.run")
         with IgnoreKeyboardInterrupt(): # Jupyter sends these in error sometimes when cells are interrupted.
             self.outbox.put("ready")
-            self.model = self.model = self.inbox.get()
-            self.example_length = self.inbox.get()
-            self.batch_size = self.inbox.get()
-            self.OptimizerType = self.inbox.get()
-            self.optimizer_args = self.inbox.get()
-            self.optimizer_kwargs = self.inbox.get()
-            self.DatasetType = self.inbox.get()
-            self.dataset_kwargs = self.inbox.get()
-            self.compute_time = self.inbox.get()
-            self.compute_energy = self.inbox.get()
-            self.step = self.inbox.get()
-            self.losses = self.inbox.get()
-            self.dataset = self.DatasetType(**self.dataset_kwargs)
-            self.dataset.set_example_length(self.example_length)
-            self.loader = Loader(self.dataset, batch_size=self.batch_size)
-            self.optimizer = self.OptimizerType(self.model.parameters(), *self.optimizer_args, **self.optimizer_kwargs)
-            self.minibatches = 1
-            self.minibatch_size = self.batch_size
-            print(f"{self.step}. This is the worker process.")
-            if self.step > 0:
-                print(f"Model has been trained for {self.compute_time}s so far.")
+            job = self.inbox.get()
+            self.model = construct_if_required(job["model"])
+            self.optimizer = construct_if_required(job["optimizer"])
+            self.dataset = construct_if_required(job["dataset"])
+            self.scheduler = construct_if_required(job["scheduler"])
+            self.info = job["profile"]
+            self.step = job["step"]
+            self.metrics = job["metrics"]
             self.parent = torch.multiprocessing.parent_process()
-            self.instruction = "pause"
-            while self.instruction != "stop":
-                print(f"{self.step}. Waiting for instruction.")
+            instruction = "pause"
+            while instruction != "stop":
                 try:
-                    self.instruction = self.inbox.get(True,1.0)
-                    self.dispatch()
+                    instruction = self.inbox.get(True,1.0)
+                    self.dispatch(instruction)
                 except Empty:
                     if not self.parent.is_alive():
-                        print(f"{self.step}. Orphaned, exiting.")
-                        self.instruction = "stop"
-        print(f"{self.step}. Exiting process.")
+                        self.log("orphaned")
+                        instruction = "stop"
+        self.log("terminate")
 
-    def dispatch(self):
-        print(f"{self.step}. Received instruction '{self.instruction}' at time {self.compute_time}.")
-        if self.instruction == "start":
-            self.instruction = self.train()
+    def dispatch(self, instruction):
+        self.log(f"dispatch({instruction}")
+        if instruction == "start":
+            instruction = self.train()
             # ... and then case fall-through for whatever it returns.
-        if self.instruction == "set_optimizer_settings":
+        if instruction == "update":
+            entity = self.inbox.get()
             settings = self.inbox.get()
-            self.set_optimizer_settings(settings)
-        if self.instruction == "get_optimizer_stats":
-            print(f"{self.step}. Getting optimizer settings.")
+            self.update(entity, settings)
+        if instruction == "get_optimizer_stats":
+            self.log("get_optimizer_stats")
             self.outbox.put(self.optimizer.state['stats'])
-        if self.instruction == "set_batch_size":
-            self.batch_size = self.inbox.get()
-            self.set_batch_size(self.batch_size)
-        if self.instruction == "set_example_length":
-            self.example_length = self.inbox.get()
-            self.set_example_length(self.example_length)
-        if self.instruction == "save":
+        if instruction == "save":
             savefile = self.inbox.get()
             self.save(savefile)
             self.outbox.put("saved")
-        if self.instruction == "pause":
+        if instruction == "pause":
             self.outbox.put("paused")
 
-    def set_optimizer_settings(self, settings):
-        print(f"{self.step}. Setting optimizer settings.")
-        for (k,v) in settings.items():
-            self.optimizer.state[k] = v
-            if k == 'batch_size':
-                self.set_batch_size(v)
-            if k == 'example_length':
-                self.set_example_length(v)
+    def update(self, entity, settings):
+        self.log(f"{entity}.update({settings})")
+        if entity == "model":
+            self.model.update(settings)
+        if entity == "optimizer":
+            self.optimizer.update(settings)
+        if entity == "dataset":
+            self.dataset.update(settings)
+        if entity == "scheduler":
+            self.scheduler.update(settings)
 
-    def set_batch_size(self, batch_size):
-        self.batch_size = batch_size
-        print(f"{self.step}. Setting new batch size.")
-        print(f"{self.step}. The batch size is now {self.batch_size}.")
-        self.minibatch_size = self.batch_size
-        self.minibatches = 1
+    def load(self, path):
+        self.log(f"load({path})")
+        checkpoint = torch.load(path)
+        self.model = checkpoint["model"]
+        self.dataset = construct_if_required(checkpoint["dataset"])
+        self.optimizer = construct_if_required(checkpoint["optimizer"])
+        self.scheduler = construct_if_required(checkpoint["scheduler"])
+        self.step = checkpoint["step"]
+        self.profile = checkpoint["profile"]
+        self.metrics = checkpoint["metrics"]
+        self.logs = checkpoint["logs"]
 
-    def set_example_length(self, example_length):
-        self.example_length = example_length
-        print(f"{self.step}. Setting example length.")
-        self.dataset.set_example_length(self.example_length)
-        print(f"{self.step}. The example length is now {self.example_length}.")
-
-    def save(self, savefile):
+    def save(self, path):
+        self.log(f"save({path})")
         checkpoint = {
-            'compute_time': self.compute_time,
-            'step': self.step,
-            'losses': self.losses,
-            'model': self.model,
-            'example_length': self.example_length,
-            'batch_size': self.batch_size,
-            'OptimizerType': self.OptimizerType,
-            'optimizer_args': self.optimizer_args,
-            'optimizer_kwargs': self.optimizer_kwargs,
-            'dataset.filename': self.dataset.filename}
-        torch.save(checkpoint, savefile)
+            "model": self.model,
+            "dataset": {
+                "type": type(self.dataset),
+                "kwargs": self.dataset.kwargs},
+            "optimizer": self.optimizer,
+            "scheduler": self.scheduler,
+            "step": self.step,
+            "profile": self.profile(),
+            "metrics": self.metrics,
+            "logs": self.logs}
+        torch.save(checkpoint, path)

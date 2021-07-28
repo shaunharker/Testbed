@@ -1,19 +1,33 @@
 import torch
 import math
 import time
+import os
 from random import randrange, randint
-from ..util import default_device, decode_broken_utf8
+from ..util import default_device
 from pathlib import Path
 import numpy as np
 import threading
 
+def default_gpt2_path():
+    return f'/home/{os.environ.get('USERNAME')}/data/corpus.utf8.txt'
+
+def filesize_in_bytes(filename):
+    return Path(filename).stat().st_size
 
 class ShortDataset:
     def __init__(self,
-                 filename='/home/sharker/data/gpt2tokenized.npy',
+                 filename=None,
                  example_length=64,
                  dataline_size=2**20,
                  max_gpu_mem=2**30):
+        if filename is None:
+            filename = default_gpt2_path()
+        self.kwargs = {
+            "filename": filename,
+            "example_length": example_length,
+            "dataline_size": dataline_size,
+            "max_gpu_mem": max_gpu_mem
+        }
         self.set_data_path(filename)
         self.set_example_length(example_length)
         self.dataline_size = dataline_size
@@ -26,7 +40,7 @@ class ShortDataset:
 
     def set_data_path(self, filename):
         self.filename = filename
-        self.file_length = Path(self.filename).stat().st_size
+        self.file_length = filesize_in_bytes(self.filename)
         self.data = None
 
     def set_example_length(self, example_length):
@@ -48,19 +62,11 @@ class ShortDataset:
     def _data_line(self):
         linebytes = 2*self.dataline_size
         offset = linebytes * randrange((self.file_length - linebytes)//linebytes) + 128 # +128 to skip numpy save header
-        try:
-            result = np.fromfile(
-                self.filename,
-                dtype=np.uint16,
-                count=self.dataline_size,
-                offset=offset)
-        except:
-            self.filename = "/home/ubuntu/data/gpt2tokenized.npy"
-            result = np.fromfile(
-                self.filename,
-                dtype=np.uint16,
-                count=self.dataline_size,
-                offset=offset)
+        result = np.fromfile(
+            self.filename,
+            dtype=np.uint16,
+            count=self.dataline_size,
+            offset=offset)
         return result
 
     def _cache_lines(self, num_lines=256):

@@ -3,122 +3,59 @@ import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
 Process = ctx.Process
 Queue = ctx.Queue
-from ..util import decode_broken_utf8, default_device
+from ..util import decode_broken_utf8, default_device, construct_if_required
 from .worker import Worker
-from ..data import TextDataset
+from ..data import ByteDataset
 
 class Trainer:
+    """
+    Trainer
+    """
     def __init__(self,
-                 model=None,
-                 example_length=64, # text example length
-                 batch_size=32, # initial batch size
-                 DatasetType=None,
-                 dataset_kwargs={},
-                 OptimizerType=None,
-                 optimizer_args=[],
-                 optimizer_kwargs={}):
-
-        self.example_length = example_length
-        self.batch_size = batch_size
-        if DatasetType is None:
-            DatasetType = TextDataset
-        self.DatasetType = DatasetType
-        self.dataset_kwargs = dataset_kwargs
-        if OptimizerType is None:
-            OptimizerType = torch.optim.AdamW
-        self.OptimizerType = OptimizerType
-        self.optimizer_args = optimizer_args
-        self.optimizer_kwargs = optimizer_kwargs
-        self.inbox = Queue()
-        self.outbox = Queue()
-        self.loss_inbox = Queue()
+                 path_or_config):
         self.running = False
         self.paused = None
+        self.metrics = []
         self.step = 0
-        self.compute_time = 0.0
-        self.compute_energy = 0.0
-        self.losses = []
+        self.info = {
+            "name": "Trainer",
+            "time": 0.0,
+            "energy": 0.0}
 
-        self.dataset = self.DatasetType(**self.dataset_kwargs)
-        self.dataset.set_example_length(self.example_length)
-        
-        if model is not None:
-            if type(model) is str:
-                self.load(model).to(device='cuda')
-            else:
-                self.model = model.to(device='cuda')
+        self.inbox = Queue()
+        self.outbox = Queue()
+        self.metrics_inbox = Queue()
+        self.metrics_inbox_daemon = threading.Thread(
+            target=self._metrics_inbox_daemon,
+            daemon=True)
+        self.path_or_config = path_or_config
 
-    def set_batch_size(self, batch_size):
-        if self.running == True:
-            self.outbox.put("set_batch_size")
-            self.outbox.put(batch_size)
-            if self.paused == False:
-                self.outbox.put("start")
-        self.batch_size = batch_size
 
-    def set_example_length(self, example_length):
-        if self.running == True:
-            self.outbox.put("set_example_length")
-            self.outbox.put(example_length)
-            if self.paused == False:
-                self.outbox.put("start")
-        self.example_length = example_length
-        self.dataset.set_example_length(example_length)
-
-    def set_optimizer_settings(self, **settings):
-        if self.running == True:
-            self.outbox.put("set_optimizer_settings")
-            self.outbox.put(settings)
-            if self.paused == False:
-                self.outbox.put("start")
-
-    def get_optimizer_stats(self):
-        stats = None
-        if self.running == True:
-            self.outbox.put("get_optimizer_stats")
-            stats = self.inbox.get()
-            if self.paused == False:
-                self.outbox.put("start")
-        return stats
-
-    def status(self):
-        return f"Running: {self.running}\nPaused: {self.paused}"
-
-    def start(self):
-        if self.running == False:
-            self.process = Worker(self.outbox, self.inbox, self.loss_inbox)
-            self.process.start()
-            ready = self.inbox.get() # Wait for ready.
-            # the problem with the following is that one needs to memorize the order
-            # uselessly. Instead, use a dictionary. TODO
-            self.outbox.put(self.model)
-            self.outbox.put(self.example_length)
-            self.outbox.put(self.batch_size)
-            self.outbox.put(self.OptimizerType)
-            self.outbox.put(self.optimizer_args)
-            self.outbox.put(self.optimizer_kwargs)
-            self.outbox.put(self.DatasetType)
-            self.outbox.put(self.dataset_kwargs)
-            self.outbox.put(self.compute_time)
-            self.outbox.put(self.compute_energy)
-            self.outbox.put(self.step)
-            self.outbox.put(self.losses)
-            self.running = True
-        self.outbox.put("start")
-        self.running = True
-        self.paused = False
-
-    def update(self):
+    def _metrics_inbox_daemon(self):
         while True:
             try:
-                item = self.loss_inbox.get(False)
+                item = self.metrics_inbox.get(False)
                 # these three things need to be updated to checkpoint properly
                 self.step = item['step']
                 self.compute_time = item['compute_time']
                 self.compute_energy = item['compute_energy']
             except:
                 break
-            self.losses.append(item)
+            self.metrics.append(item)
+
+    def status(self):
+        return {"running": self.running, "paused": self.paused}
+
+    def start(self):
+        if self.running == False:
+            self.process = Worker(self.outbox, self.inbox, self.metrics_inbox)
+            self.process.start()
+            self.inbox.get() # blocks until process is ready
+            self.outbox.put(self.path_or_config)
+            self.running = True
+        self.outbox.put("start")
+        self.running = True
+        self.paused = False
 
     def pause(self):
         """
@@ -142,25 +79,11 @@ class Trainer:
         self.stop()
         if path is None:
             path = "checkpoint.pt"
-        checkpoint = torch.load(path)
-        self.compute_time = checkpoint["compute_time"]
-        try:
-            self.compute_energy = checkpoint["compute_energy"]
-        except:
-            self.compute_energy = 0.0
-        self.step = checkpoint["step"]
-        self.losses = checkpoint["losses"]
-        self.model = checkpoint["model"].to(device='cuda')
-        self.example_length = checkpoint["example_length"]
-        self.batch_size = checkpoint["batch_size"]
-        self.OptimizerType = checkpoint["OptimizerType"]
-        self.optimizer_args = checkpoint["optimizer_args"]
-        self.optimizer_kwargs = checkpoint["optimizer_kwargs"]
-        filename = checkpoint["dataset.filename"]
-        if filename == self.dataset.filename:
-            self.dataset.set_example_length(self.example_length)
-        else:
-            self.dataset = TextDataset(filename=filename, example_length=self.example_length)
+        self.outbox.put("load")
+        self.outbox.put(path)
+        self.inbox.get()
+        if self.running and not was_paused:
+            self.start()
 
     def save(self, path=None):
         was_paused = self.paused
@@ -172,6 +95,22 @@ class Trainer:
         self.inbox.get()
         if self.running and not was_paused:
             self.start()
+
+    def update(self, entity, settings):
+        if self.running == True:
+            self.outbox.put("update")
+            self.outbox.put(entity)
+            self.outbox.put(settings)
+            self.inbox.get() # blocks
+
+    def get_optimizer_stats(self):
+        stats = None
+        if self.running == True:
+            self.outbox.put("get_optimizer_stats")
+            stats = self.inbox.get()
+            if self.paused == False:
+                self.outbox.put("start")
+        return stats
 
     def autocomplete(self, prompt="", output_length=1024):
         was_paused = self.paused

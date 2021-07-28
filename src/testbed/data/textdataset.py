@@ -7,18 +7,44 @@ from pathlib import Path
 import numpy as np
 import threading
 
+def default_utf8_path():
+    return f'/home/{os.environ.get('USERNAME')}/data/corpus.utf8.txt'
+
+def filesize_in_bytes(filename):
+    return Path(filename).stat().st_size
+
+def random_utf8_sequence(n_bytes=128, filename='/home/sharker/data/corpus.utf8.txt'):
+    N = filesize_in_bytes(filename)
+    offset = randrange(N - n_bytes)
+    result = np.fromfile(
+        filename,
+        dtype=np.ubyte,
+        count=n_bytes,
+        sep='',
+        offset=offset)
+    return result
+
 def load_corpus_bytes(filename='/home/sharker/data/corpus.utf8.txt'):
+    if filename is None:
+        filename=f'/home/{os.environ.get('USERNAME')}/data/corpus.utf8.txt',
     with open(filename, 'rb') as infile:
         data = infile.read()
     return data
 
-class TextDataset:
+class ByteDataset:
     def __init__(self,
-                 filename='/home/sharker/data/corpus.utf8.txt',
+                 filename=None,
                  example_length=64,
-                 shuffle=True,
                  max_cache=2**30,
                  dataline_size=2**20):
+        if filename is None:
+            filename = default_utf8_path()
+        self.kwargs = {
+            "filename": filename,
+            "example_length": example_length,
+            "max_cache": max_cache,
+            "dataline_size": dataline_size
+        }
         self.set_data_path(filename)
         self.set_example_length(example_length)
         self.shuffle = shuffle
@@ -32,7 +58,7 @@ class TextDataset:
 
     def set_data_path(self, filename):
         self.filename = filename
-        self.file_length = Path(self.filename).stat().st_size
+        self.file_length = filesize_in_bytes(filename)
         self.data = None
 
     def set_example_length(self, example_length):
