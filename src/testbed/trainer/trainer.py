@@ -62,26 +62,37 @@ class Trainer:
         self.inbox = Queue()
         self.outbox = Queue()
 
-        # The next four lines set up an inbox that is continually
-        # emptied into self.metrics:
+        # self.metrics
+        #     is a list that stores data for the client to use.
+        #
+        # self.metrics_inbox
+        #     is a communication queue used to
+        #     receive the continually streaming data that is
+        #     placed in the metrics list.
+        #
+        # self.metrics_inbox_daemon
+        #     is a thread that moves the contents
+        #     of self.metrics_inbox into self.metric.
+        #
+        # self.halt
+        #     is an event that signals to self.metrics_inbox_daemon
+        #     to break from its event loop and shut down.
 
-        # self.metrics is a list that stores data for the client to use.
         self.metrics = []
-
-        # self.metrics_inbox is a communication queue used to
-        #   receive the data that is placed in the metrics list.
         self.metrics_inbox = Queue()
-
-        # self.metrics_inbox_daemon is a thread that moves the contents
-        #   of self.metrics_inbox into self.metric.
+        self.halt = threading.Event()
+        def _metrics_inbox_daemon(halt, metrics_inbox, metrics):
+            while not halt.is_set():
+                try:
+                    item = metrics_inbox.get(block=True,timeout=1.0)
+                    metrics.append(item)
+                except:
+                    pass
         self.metrics_inbox_daemon = threading.Thread(
-            target=self._metrics_inbox_daemon,
+            target=_metrics_inbox_daemon,
+            args=(self.halt, self.metrics_inbox, self.metrics),
             daemon=True)
-
-        # self.halt_metrics_inbox_daemon is an event that signals to the
-        #   thread to break from its event loop and shut down. It is
-        #   called when the trainer is garbage collected.
-        self.halt_metrics_inbox_daemon = threading.Event()
+        self.metrics_inbox_daemon.start()
 
         # Boot up the worker. It will be in a "paused" state.
         self.process = Worker(self.outbox, self.inbox, self.metrics_inbox)
@@ -92,39 +103,36 @@ class Trainer:
         self.call("boot", **bootargs)
 
     def __del__(self):
-        self.halt_metrics_inbox_daemon.set()
-
-    def _metrics_inbox_daemon(self):
-        while not self.halt_metrics_inbox_daemon.is_set():
-            try:
-                item = self.metrics_inbox.get(block=True,timeout=1.0)
-                self.metrics.append(item)
-            except:
-                pass
+        self.halt.set()
 
     def start(self):
         if self.paused == True:
-            self.call("start")
+            result = self.call("start")
             self.paused = False
+            return result
+        return "already started"
 
     def pause(self):
         if self.paused == False:
             self.paused = True
-            self.call("pause")
+            return self.call("pause")
+        return "already paused"
 
     def stop(self):
         self.paused = None
-        self.call("stop")
+        result = self.call("stop")
         self.process.join()
+        self.halt_metrics_inbox_daemon.set()
+        return result
 
     def save(self, path="checkpoint.pt"):
-        self.call("save", path=path)
+        return self.call("save", path=path)
 
     def update(self, entity, settings):
-        self.call("update", entity=entity, setting=settings)
+        return self.call("update", entity=entity, setting=settings)
 
     def fetch(self, entity):
-        return self.call("fetch", "entity"=entity)
+        return self.call("fetch", entity=entity)
 
     def autocomplete(self, prompt="", output_length=256, max_ctx=512):
         return self.call("autocomplete", prompt=prompt,

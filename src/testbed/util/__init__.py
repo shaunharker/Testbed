@@ -1,12 +1,24 @@
 import torch
 from .delaykeyboardinterrupt import DelayKeyboardInterrupt
 from .ignorekeyboardinterrupt import IgnoreKeyboardInterrupt
-from .reporter import Reporter
 from .stopwatch import Stopwatch
+from pathlib import Path
 
 from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 nvmlInit()
 
+# PyTorch default device
+def default_device():
+    if torch.cuda.is_available():
+        return "cuda:0"
+    else:
+        return "cpu"
+
+# Convenience
+def numel(model):
+    return sum(p.numel() for p in model.parameters())
+
+# PyTorch/CUDA Memory
 def memory_allocated():
     return torch.cuda.memory_allocated(0)
 
@@ -19,6 +31,7 @@ def memory_free():
 
 @lru_cache
 def memory_usage(f, shape):
+    # TODO: Test and see if this works. Also: try--except.
     x = torch.zeros(shape, device='cuda')
     a0 = memory_allocated()
     y = f(x)
@@ -26,7 +39,28 @@ def memory_usage(f, shape):
     del y
     del x
     return usage
-    
+
+
+def filesize_in_bytes(filename):
+    return Path(filename).stat().st_size
+
+# UTF-8
+def default_utf8_path():
+    return f'/home/{os.environ.get('USERNAME')}/data/gutenberg.utf8'
+
+def random_utf8_sequence(n_bytes=128, path=None):
+    if path is None:
+        path = default_utf8_path()
+    N = filesize_in_bytes(filename)
+    offset = randrange(N - n_bytes)
+    result = np.fromfile(
+        filename,
+        dtype=np.ubyte,
+        count=n_bytes,
+        sep='',
+        offset=offset)
+    return result
+
 def decode_broken_utf8(s):
     def charsize(b):
         if b&128 == 0:
@@ -56,31 +90,25 @@ def decode_broken_utf8(s):
 
     return bytes(repaired).decode('utf-8')
 
-def default_device():
-    if torch.cuda.is_available():
-        return "cuda:0"
-    else:
-        return "cpu"
-
-def numel(model):
-    return sum(p.numel() for p in model.parameters())
-
 def construct_if_required(x):
     """
     Used for handling inputs of Maybe-Constructed things.
     A Maybe-Constructed thing is either:
     1. A dictionary of the form
 
-        {"type": T,
+        {
+         "type": T,
          "args": args, # optional
-         "kwargs": kwargs # optional}
+         "kwargs": kwargs # optional
+        }
 
     from which we may construct the object
 
-        T(*args, **args),
+        T(*args, **kwargs),
 
     which is returned, or
-    2. Anything else, which is returned unchanged.
+    2. Anything else, which is returned unchanged, as
+       it is deemed already constructed.
     """
     if type(x) == dict:
         try:
