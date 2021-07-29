@@ -13,11 +13,8 @@ class Trainer:
     Args:
 
     Supply exactly one of the following arguments:
-
         path: the path of a checkpoint
-
     or
-
         config: a configuration dictionary of the form:
 
     Example:

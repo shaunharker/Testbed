@@ -7,10 +7,9 @@ import numpy as np
 from threading import Thread, Lock
 
 class StatsTicker:
-    def __init__(self, trainer, x='compute_time', y='mean_loss', kind='line'):
-        self.trainer = trainer
+    def __init__(self, metrics, x='time', y='mean_loss', kind='line'):
         self.tick = 0
-        self.losses = []
+        self.metrics = metrics
         self.bokeh = {}
         self.bokeh_handle = None
         self.updating = False
@@ -26,8 +25,6 @@ class StatsTicker:
         TOOLS="pan,wheel_zoom,box_zoom,reset"
         self.bokeh["figure"] = figure(tools=TOOLS)
         self.bokeh["figure"].axis.major_label_text_font_size = "24px"
-        self.trainer.update()
-        self.losses = self.trainer.losses
         self.tick = 0
         data = {self.x : [], self.y : []}
         if self.kind == 'line':
@@ -50,18 +47,16 @@ class StatsTicker:
             self.updater.join()
 
     def data_tail(self, tick=0):
-        data = {self.x : [ item[self.x] for item in self.losses[tick:]],
-                self.y : [ item[self.y] for item in self.losses[tick:]]}
+        data = {self.x : [ item[self.x] for item in self.metrics[tick:]],
+                self.y : [ item[self.y] for item in self.metrics[tick:]]}
         return data
 
     def _update_loop(self):
         while self.updating:
             time.sleep(1)
-            self.trainer.update()
-            self.losses = self.trainer.losses
             data = self.data_tail(self.tick)
             if len(data) > 0:
                 self.bokeh["data"].data_source.stream({'x':data[self.x],
                                                        'y':data[self.y]})
-                self.tick = len(self.losses)
+                self.tick = len(self.metrics)
             push_notebook(handle=self.bokeh_handle)

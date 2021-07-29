@@ -84,17 +84,17 @@ class MultiHeadSelfAttention(torch.nn.Module):
             "time": 0.0,
             "energy": 0.0,
             "children": {
-                "layernorm": {},
-                "query_projection": {},
-                "key_projection": {},
-                "value_projection": {},
-                "split_heads": {},
-                "matmul(Q,K^T)": {},
-                "masking_attention": {},
-                "compute_attention": {},
-                "matmul(A,V)": {},
-                "merge_heads": {},
-                "output_projection": {}}}
+                "layernorm": {"energy": 0.0, "time": 0.0},
+                "query_projection": {"energy": 0.0, "time": 0.0},
+                "key_projection": {"energy": 0.0, "time": 0.0},
+                "value_projection": {"energy": 0.0, "time": 0.0},
+                "split_heads": {"energy": 0.0, "time": 0.0},
+                "matmul(Q,K^T)": {"energy": 0.0, "time": 0.0},
+                "masking_attention": {"energy": 0.0, "time": 0.0},
+                "compute_attention": {"energy": 0.0, "time": 0.0},
+                "matmul(A,V)": {"energy": 0.0, "time": 0.0},
+                "merge_heads": {"energy": 0.0, "time": 0.0},
+                "output_projection": {"energy": 0.0, "time": 0.0}}}
 
     def profile(self):
         self.info["children"].update({
@@ -268,7 +268,7 @@ class TransformerLayer(torch.nn.Module):
             "feedforward": self.feedforward.profile()})
         self.info["energy"] = sum(self.info["children"][key]["energy"]
                                   for key in self.info["children"])
-        return data
+        return self.info
 
     @autocast()
     def forward(self, x):

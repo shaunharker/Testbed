@@ -5,8 +5,9 @@ from queue import Empty
 from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_allocated
 import time
 import json
+import numpy as np
 
-class JobInterrrupt(Exception):
+class JobInterrupt(Exception):
     def __init__(self, job):
         super().__init__()
         self.job = job
@@ -31,7 +32,7 @@ class Worker(ctx.Process):
             "name": "Worker",
             "time": 0.0,
             "energy": 0.0,
-            "data": 0.0,
+            "ingest": 0.0,
             "children": {
                 "model": {}}}
         self.metrics = []
@@ -73,7 +74,7 @@ class Worker(ctx.Process):
             try:
                 job = self.inbox.get(False)
                 if job["instruction"] != "start":
-                    raise JobInterrrupt(job)
+                    raise JobInterrupt(job)
                 else:
                     self.outbox.put("already started")
             except Empty:
@@ -90,7 +91,7 @@ class Worker(ctx.Process):
                 loss.backward()
             Y.append(batch_losses.detach())
         Y = torch.cat(Y)
-        return Y.numpy()
+        return Y.cpu().numpy()
 
     def train(self):
         self.log("train")
@@ -100,7 +101,7 @@ class Worker(ctx.Process):
                     raise RuntimeError("Parent process is not alive.")
                 try:
                     batch_losses = self.optimizer.step(self.closure)
-                except JobInterrrupt as e:
+                except JobInterrupt as e:
                     job = e.job
                     break
                 self.step += 1
@@ -112,11 +113,12 @@ class Worker(ctx.Process):
                              'energy': self.info["energy"]/1E12,
                              'ingest': self.info["ingest"],
                              'profile': self.info,
+                             'mean_loss': np.mean(batch_losses),
                              'batch_losses': batch_losses}
                 self.metrics.append(step_info)
                 self.metrics_outbox.put(step_info)
         self.info["time"] += stopwatch.total_run_time
-        self.log(f"JobInterrrupt({job})")
+        self.log(f"JobInterrupt({job})")
         return job
 
     def run(self):
@@ -159,6 +161,7 @@ class Worker(ctx.Process):
                 try:
                     job = self.inbox.get(True,1.0)
                     result = self.dispatch(job["instruction"],
+                                           *job["args"],
                                            **job["kwargs"])
                     self.outbox.put(result)
 
@@ -170,7 +173,7 @@ class Worker(ctx.Process):
                         break
         self.log("terminate")
 
-    def dispatch(self, instruction, **kwargs):
+    def dispatch(self, instruction, *args, **kwargs):
         self.log(f"dispatch({instruction, kwargs}")
         if instruction == "start":
             self.log("start")
@@ -193,8 +196,10 @@ class Worker(ctx.Process):
             self.log("pause")
             return "paused"
 
-    def update(self, entity, *args, **kwargs):
+    def update(self, *args, **kwargs):
         self.log(f"update({args},{kwargs})")
+        entity = args[0]
+        args = args[1:]
         if entity == "model":
             return self.model.update(*args, **kwargs)
         if entity == "optimizer":

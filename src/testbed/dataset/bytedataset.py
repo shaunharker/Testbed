@@ -29,17 +29,19 @@ class ByteDataset:
         self.cache_lock = threading.Lock()
         self.cache_available = threading.Event()
         self.cache_invalid = threading.Event()
+        self.data = None
         return {"path": self.path}
 
     def batch(self, batch_size, example_length):
         assert example_length <= 1024
         self.renew_worker_thread(batch_size, example_length)
+        #print(self.cache_available, self.cache_available.wait(), len(self.cache))
         self.cache_available.wait()
-        self.cache_lock.acquire()
-        result = self.cache.pop()
-        if len(self.cache) == 0:
-            self.cache_available.clear()
-        self.cache_lock.release()
+        with self.cache_lock:
+            #print(len(self.cache), self.cache_available)
+            result = self.cache.pop()
+            if len(self.cache) == 0:
+                self.cache_available.clear()
         self.renew_worker_thread(batch_size, example_length)
         return result
 
@@ -48,9 +50,11 @@ class ByteDataset:
             self.cache_invalid.set()
             if self.worker is not None:
                 self.worker.join()
-            self.cache = []
-            self.cache_shape = (batch_size, example_length)
-            self.cache_invalid.clear()
+            with self.cache_lock:
+                self.cache = []
+                self.cache_shape = (batch_size, example_length)
+                self.cache_invalid.clear()
+                self.cache_available.clear()
         if self.worker is None or not self.worker.is_alive():
             self.worker = threading.Thread(
                 target=self._worker,
@@ -58,24 +62,28 @@ class ByteDataset:
             self.worker.start()
 
     def _worker(self, batch_size, example_length):
+        page = lambda : np.fromfile(self.path, dtype=np.ubyte, count=2**25, sep='',
+            offset= 1024*(randrange(self.n_bytes - 2**25)//1024)).reshape(-1,1024)
+        if self.data is None:
+            self.data = page()
         desired_cache_size = max(2**25//(batch_size * example_length), 1)
-        while len(self.cache) < desired_cache_size:
+        while True:
+            with self.cache_lock:
+                if len(self.cache) > desired_cache_size:
+                    break
             if self.cache_invalid.is_set():
                 break
             examples_left = self.data.shape[0]
             if examples_left < batch_size:
-                self.page = np.fromfile(self.path, dtype=np.ubyte, count=2**25, sep='',
-                            offset= 1024*(randrange(self.n_bytes - 2**25)//1024)).reshape(-1,1024)
-                self.data = np.concatenate((self.data, self.page))
+                self.data = np.concatenate((self.data, page()))
             result = self._batch(batch_size, example_length)
-            self.cache_lock.acquire()
-            self.cache.append(result)
-            self.cache_available.set()
-            self.cache_lock.release()
+            with self.cache_lock:
+                self.cache.append(result)
+                self.cache_available.set()
 
     def _batch(self, batch_size, example_length):
         get_example = lambda idx: (lambda a, b, c: a[b:b+c])(
             self.data[idx], randrange(1024-example_length+1), example_length)
-        result = np.stack(get_example(idx) for idx in range(batch_size))
+        result = np.stack([get_example(idx) for idx in range(batch_size)])
         self.data = self.data[batch_size:,:]
         return torch.tensor(result,dtype=torch.long,device='cuda')
