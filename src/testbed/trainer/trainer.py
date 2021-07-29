@@ -143,7 +143,7 @@ class Trainer:
 
     def call(self, instruction, **kwargs):
         if self.paused is None:
-            raise RuntimeError("Trainer is defunct since stop has been called.")
+            raise RuntimeError("Trainer is stopped.")
         self.outbox.put({"instruction": instruction,
                          "kwargs": kwargs})
         result = self.inbox.get() # blocks

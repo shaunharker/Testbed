@@ -8,6 +8,12 @@ class ByteDataset:
                  path=None):
         if path is None:
             path = f'/home/{os.environ.get('USERNAME')}/data/gutenberg.1024.utf8'
+        self.thread = None
+        self.update(path=path)
+
+    def update(self, path=path):
+        if self.thread is not None:
+            self.thread.join()
         self.path = path
         self.n_bytes = Path(path).stat().st_size
         self._refresh()

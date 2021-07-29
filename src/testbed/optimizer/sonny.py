@@ -1,16 +1,15 @@
 import torch
 from torch.optim import Optimizer
-from torch.distributions.log_normal import LogNormal
-from .tracker import Accumulator, EMA, MedianTracker
-import math
+from .tracker import EMA
 
 class Sonny(Optimizer):
-    r"""Currently = AdamW. Template for experiments.
+    r"""
+
+    Currently just reimplemented AdamW with a learning schedule baked in.
 
     The original Adam algorithm was proposed in `Adam: A Method for Stochastic Optimization`_.
     The AdamW variant was proposed in `Decoupled Weight Decay Regularization`_.
-    The Sonny variant is being proposed now. It is a significant and horrible regression
-    from the state of the art.
+
     Args:
         parameters (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
@@ -55,12 +54,14 @@ class Sonny(Optimizer):
         self.state['warmup'] = warmup
         self.closure = None
 
+    def update(self, settings):
+        self.state.update(settings)
+        
     def params(self):
         return [p for group in self.param_groups for p in group['params']
                 if p.grad is not None and not p.grad.is_sparse]
 
     def setup(self):
-        self.state['stats']['loss'] = Accumulator()
         for (idx, p) in enumerate(self.params()):
             zeros = lambda : torch.zeros_like(p, memory_format=torch.preserve_format)
             self.state[idx]={'ema_grad': EMA(self.state['beta1'], zeros()),
@@ -69,11 +70,10 @@ class Sonny(Optimizer):
     @torch.no_grad()
     def step(self, closure):
         with torch.enable_grad():
-            (mean_loss, mean_sqr_loss, examples) = closure()
+            result = closure()
         if self.state['step'] == 0:
             self.setup()
         self.state['step'] += 1
-        self.state['stats']['loss'].step([mean_loss*examples, mean_sqr_loss*examples, examples])
         for (idx, p) in enumerate(self.params()):
             if torch.any(torch.isnan(p.grad.data)):
                 raise RuntimeError(f"Sonny.step: Detected nan in p.grad.data.")
@@ -93,5 +93,4 @@ class Sonny(Optimizer):
             torch.sqrt_(G2).add_(self.state['eps']) # G2 = torch.sqrt(G2) + self.state['eps']
             G.div_(G2).add_(p.data,alpha=self.state['weight_decay'])
             p.data.sub_(G,alpha=stepsize)
-
-        return (mean_loss, mean_sqr_loss, examples)
+        return result
