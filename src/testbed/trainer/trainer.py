@@ -128,11 +128,8 @@ class Trainer:
     def save(self, path="checkpoint.pt"):
         return self.call("save", path=path)
 
-    def update(self, entity, settings):
-        return self.call("update", entity=entity, setting=settings)
-
-    def fetch(self, entity):
-        return self.call("fetch", entity=entity)
+    def update(self, *args, **kwargs):
+        return self.call("update", *args, **kwargs)
 
     def autocomplete(self, prompt="", output_length=256, max_ctx=512):
         return self.call("autocomplete", prompt=prompt,
@@ -141,10 +138,11 @@ class Trainer:
     def status(self):
         return {"paused": self.paused}
 
-    def call(self, instruction, **kwargs):
+    def call(self, instruction, *args, **kwargs):
         if self.paused is None:
             raise RuntimeError("Trainer is stopped.")
         self.outbox.put({"instruction": instruction,
+                         "args": args,
                          "kwargs": kwargs})
         result = self.inbox.get() # blocks
 

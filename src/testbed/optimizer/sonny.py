@@ -54,9 +54,9 @@ class Sonny(Optimizer):
         self.state['warmup'] = warmup
         self.closure = None
 
-    def update(self, settings):
-        self.state.update(settings)
-        
+    def update(self, *args, **kwargs):
+        self.state.update(*args, **kwargs)
+
     def params(self):
         return [p for group in self.param_groups for p in group['params']
                 if p.grad is not None and not p.grad.is_sparse]

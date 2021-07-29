@@ -17,7 +17,6 @@ class Worker(ctx.Process):
         self.inbox = inbox
         self.outbox = outbox
         self.metrics_outbox = metrics_outbox
-        self.parent = torch.multiprocessing.parent_process()
 
         self.model = None
         self.dataset = None
@@ -80,8 +79,8 @@ class Worker(ctx.Process):
             except Empty:
                 pass
             X = (self.dataset.batch(
-                    example_length=self.example_length,
-                    batch_size=self.minibatch_size)
+                    batch_size=self.minibatch_size,
+                    example_length=self.example_length)
                 .to(device='cuda',
                     dtype=torch.long,
                     non_blocking=True))
@@ -122,33 +121,45 @@ class Worker(ctx.Process):
 
     def run(self):
         self.log(f"Worker.run")
-        self.minibatches = 1
+        self.parent = torch.multiprocessing.parent_process()
         self.outbox.put("ready")
         job = self.inbox.get()
         instruction = job["instruction"]
         assert instruction == "boot"
-        if "config" in job:
-            self.config = job["config"]
-            make = lambda x: x["type"](**x["kwargs"])
-            self.model = make(self.config["model"])
-            self.optimizer = make(self.config["optimizer"])
-            self.dataset = make(self.config["dataset"])
-            self.batch_size = self.config["batch_size"]
-            self.example_length = self.config["example_length"]
-        elif "path" in job:
-            self.load(job["path"])
+        self.log(f"boot")
+        if "config" in job["kwargs"]:
+            self.log(f"boot from config")
+            config = job["kwargs"]["config"]
+            try:
+                self.model = config["model"]["type"](**config["model"]["kwargs"])
+            except:
+                self.model = config["model"]
+            self.optimizer = config["optimizer"]["type"](
+                self.model.parameters(), **config["optimizer"]["kwargs"])
+            self.dataset = config["dataset"]["type"](**config["dataset"]["kwargs"])
+            self.batch_size = config["batch_size"]
+            self.example_length = config["example_length"]
+            self.minibatches = 1
+            self.minibatch_size = self.batch_size
+
+        elif "path" in job["kwargs"]:
+            self.log(f"boot from path")
+            path = job["kwargs"]["path"]
+            self.load(path)
         else:
             raise RuntimeError("Invalid job")
+        self.outbox.put("booted")
 
         # Jupyter sends KeyboardInterrupt in error sometimes
         # when cells are interrupted, so we ignore them in our
         # main event loop:
+        self.log(f"main_event_loop")
         with IgnoreKeyboardInterrupt():
             while True:
                 try:
                     job = self.inbox.get(True,1.0)
                     result = self.dispatch(job["instruction"],
-                                           job["kwargs"])
+                                           **job["kwargs"])
                     self.outbox.put(result)
 
                     if job["instruction"] == "stop":
@@ -159,13 +170,14 @@ class Worker(ctx.Process):
                         break
         self.log("terminate")
 
-    def dispatch(self, instruction, kwargs):
+    def dispatch(self, instruction, **kwargs):
         self.log(f"dispatch({instruction, kwargs}")
         if instruction == "start":
             self.log("start")
             self.outbox.put("started")
             job = self.train()
             instruction = job["instruction"]
+            args = job["args"]
             kwargs = job["kwargs"]
             assert instruction != "start"
             # ... and then case fall-through to handle
@@ -174,46 +186,27 @@ class Worker(ctx.Process):
             self.log("stop")
             return "stopped"
         if instruction == "update":
-            entity = kwargs["entity"]
-            settings = kwargs["settings"]
-            return self.update(entity, settings)
-        if instruction == "fetch":
-            entity = kwargs["entity"]
-            return self.fetch(entity)
+            return self.update(*args, **kwargs)
         if instruction == "save":
-            path = kwargs["path"]
-            self.save(path)
-            return "saved"
+            return self.save(*args, **kwargs)
         if instruction == "pause":
             self.log("pause")
             return "paused"
 
-    def update(self, entity, settings):
-        self.log(f"update({entity},{settings})")
+    def update(self, entity, *args, **kwargs):
+        self.log(f"update({args},{kwargs})")
         if entity == "model":
-            self.model.update(settings)
-            return self.model.settings
+            return self.model.update(*args, **kwargs)
         if entity == "optimizer":
-            self.optimizer.update(settings)
-            return self.optimizer.settings
+            return self.optimizer.update(*args, **kwargs)
         if entity == "dataset":
-            self.dataset.update(settings)
-            return self.dataset.settings
+            return self.dataset.update(*args, **kwargs)
         if entity == "batch_size":
-            self.batch_size = settings
+            self.batch_size = kwargs["batch_size"]
             return self.batch_size
         if entity == "example_length":
-            self.example_length = settings
+            self.example_length = kwargs["example_length"]
             return self.example_length
-
-    def fetch(self, entity):
-        self.log(f"fetch({entity})")
-        if entity == "model":
-            return 0 # TODO
-        if entity == "optimizer":
-            return 0 # TODO
-        if entity == "dataset":
-            return 0 # TODO
 
     def load(self, path):
         self.log(f"load({path})")

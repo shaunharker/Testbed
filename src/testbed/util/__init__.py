@@ -3,8 +3,8 @@ from .delaykeyboardinterrupt import DelayKeyboardInterrupt
 from .ignorekeyboardinterrupt import IgnoreKeyboardInterrupt
 from .stopwatch import Stopwatch
 from pathlib import Path
-
-from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
+from functools import lru_cache
+from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlInit
 nvmlInit()
 
 # PyTorch default device
@@ -13,6 +13,9 @@ def default_device():
         return "cuda:0"
     else:
         return "cpu"
+
+def default_data_path():
+    return f"/home/{os.environ.get('USERNAME')}/data/"
 
 # Convenience
 def numel(model):
@@ -40,14 +43,10 @@ def memory_usage(f, shape):
     del x
     return usage
 
-
 def filesize_in_bytes(filename):
     return Path(filename).stat().st_size
 
 # UTF-8
-def default_utf8_path():
-    return f'/home/{os.environ.get('USERNAME')}/data/gutenberg.utf8'
-
 def random_utf8_sequence(n_bytes=128, path=None):
     if path is None:
         path = default_utf8_path()
