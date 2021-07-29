@@ -2,7 +2,7 @@ import gc
 import torch.multiprocessing
 ctx = torch.multiprocessing.get_context("spawn")
 from queue import Empty
-from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_allocated
+from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_allocated, memory_free
 import time
 import json
 import numpy as np
@@ -41,28 +41,34 @@ class Worker(ctx.Process):
     def profile(self):
         return self.info
 
-    def log(self, message):
+    def log(self, message, data=None):
         log_message = {
             "step": self.step,
             "time": self.info["time"],
             "message": message}
+        if data is not None:
+            log_message["data"] = data
         self.logs.append(log_message)
-        print(json.dumps(log_message))
+        print(json.dumps(log_message, indent=4))
 
     def closure(self):
         while True:
             try:
                 return self._closure()
             except RuntimeError as e: # CUDA OOM
-                if "CUDA out of memory" in str(e):
+                if "CUDA" in str(e): # false positives?
                     self.minibatches *= 2
                     self.minibatch_size = self.batch_size // self.minibatches
                     if self.minibatch_size == 0:
                         raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
+                    f = memory_free()
+                    a = memory_allocated()
                     self.log(f"Splitting batch of {self.batch_size} examples into "
                              f"{self.minibatches} minibatches of size {self.minibatch_size} "
-                             "due to memory constraints.\n"
-                             "The results will not be affected.")
+                             f"due to memory constraints.\n",
+                             {"cuda_memory": {"free": f"{f//2**20}MiB",
+                                              "allocated": f"{a//2**20}MiB",
+                                              "total": f"{(f+a)//2**20}MiB"}})
                 else:
                     raise e
 
