@@ -1,5 +1,6 @@
 import gc
 import torch.multiprocessing
+import torch
 ctx = torch.multiprocessing.get_context("spawn")
 from queue import Empty
 from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_allocated, memory_free
@@ -13,21 +14,23 @@ class JobInterrupt(Exception):
         self.job = job
 
 class Worker(ctx.Process):
-    def __init__(self, inbox, outbox, metrics_outbox):
+    def __init__(self, inbox, outbox, metrics_outbox, autocomplete_outbox):
         super().__init__(daemon=True)
+        # Communication
         self.inbox = inbox
         self.outbox = outbox
         self.metrics_outbox = metrics_outbox
+        self.autocomplete_outbox = autocomplete_outbox
 
+        # Major objects
         self.model = None
         self.dataset = None
         self.optimizer = None
-        self.batch_size = None
-        self.example_length = None
 
+        # Tuning hyperparameters and logs
+        self.step = 0
         self.minibatches = None
         self.minibatch_size = None
-        self.step = 0
         self.info = {
             "name": "Worker",
             "time": 0.0,
@@ -41,13 +44,13 @@ class Worker(ctx.Process):
     def profile(self):
         return self.info
 
-    def log(self, message, data=None):
+    def log(self, *args, **kwargs):
         log_message = {
             "step": self.step,
-            "time": self.info["time"],
-            "message": message}
-        if data is not None:
-            log_message["data"] = data
+            "time": self.info["time"]}
+        if len(args) > 0:
+            log_message["args"] = args
+        log_message.update(kwargs)
         self.logs.append(log_message)
         print(json.dumps(log_message, indent=4))
 
@@ -57,18 +60,21 @@ class Worker(ctx.Process):
                 return self._closure()
             except RuntimeError as e: # CUDA OOM
                 if "CUDA" in str(e): # false positives?
+                    torch.cuda.empty_cache()
                     self.minibatches *= 2
-                    self.minibatch_size = self.batch_size // self.minibatches
+                    self.minibatch_size = self.dataset.batch_size // self.minibatches
                     if self.minibatch_size == 0:
                         raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
                     f = memory_free()
                     a = memory_allocated()
-                    self.log(f"Splitting batch of {self.batch_size} examples into "
+                    self.log(f"Splitting batch of {self.dataset.batch_size} examples into "
                              f"{self.minibatches} minibatches of size {self.minibatch_size} "
                              f"due to memory constraints.\n",
-                             {"cuda_memory": {"free": f"{f//2**20}MiB",
-                                              "allocated": f"{a//2**20}MiB",
-                                              "total": f"{(f+a)//2**20}MiB"}})
+                             batch_size=self.dataset.batch_size,
+                             example_length=self.dataset.example_length,
+                             cuda_memory={"free": f"{f//2**20}MiB",
+                                          "allocated": f"{a//2**20}MiB",
+                                          "total": f"{(f+a)//2**20}MiB"})
                 else:
                     raise e
 
@@ -87,7 +93,7 @@ class Worker(ctx.Process):
                 pass
             X = (self.dataset.batch(
                     batch_size=self.minibatch_size,
-                    example_length=self.example_length)
+                    example_length=self.dataset.example_length)
                 .to(device='cuda',
                     dtype=torch.long,
                     non_blocking=True))
@@ -113,7 +119,7 @@ class Worker(ctx.Process):
                 self.step += 1
                 self.info["energy"] = self.model.profile()["energy"]
                 # TODO: don't neglect optimizer costs
-                self.info["ingest"] += self.batch_size * self.example_length
+                self.info["ingest"] += self.dataset.batch_size * self.dataset.example_length
                 step_info = {'step': self.step,
                              'time': self.info["time"] + stopwatch.time_elapsed,
                              'energy': self.info["energy"]/1E12,
@@ -139,17 +145,31 @@ class Worker(ctx.Process):
             self.log(f"boot from config")
             config = job["kwargs"]["config"]
             try:
-                self.model = config["model"]["type"](**config["model"]["kwargs"])
-            except:
+                self.model = config["model"]["type"](
+                    **config["model"]["kwargs"]).to('cuda')
+                self.log(f"model constructed")
+            except Exception as e:
+                print(e)
                 self.model = config["model"]
-            self.optimizer = config["optimizer"]["type"](
-                self.model.parameters(), **config["optimizer"]["kwargs"])
-            self.dataset = config["dataset"]["type"](**config["dataset"]["kwargs"])
-            self.batch_size = config["batch_size"]
-            self.example_length = config["example_length"]
+                self.log(f"model received")
+            try:
+                self.optimizer = config["optimizer"]["type"](
+                    parameters=self.model.parameters(),
+                    **config["optimizer"]["kwargs"])
+                self.log(f"optimizer constructed")
+            except Exception as e:
+                print(e)
+                self.optimizer = config["optimizer"]
+                self.log(f"optimizer received")
+            try:
+                self.dataset = config["dataset"]["type"](
+                    **config["dataset"]["kwargs"])
+                self.log(f"dataset constructed")
+            except:
+                self.dataset = config["dataset"]
+                self.log(f"dataset received")
             self.minibatches = 1
-            self.minibatch_size = self.batch_size
-
+            self.minibatch_size = self.dataset.batch_size
         elif "path" in job["kwargs"]:
             self.log(f"boot from path")
             path = job["kwargs"]["path"]
@@ -170,7 +190,6 @@ class Worker(ctx.Process):
                                            *job["args"],
                                            **job["kwargs"])
                     self.outbox.put(result)
-
                     if job["instruction"] == "stop":
                         break
                 except Empty:
@@ -196,28 +215,56 @@ class Worker(ctx.Process):
             return "stopped"
         if instruction == "update":
             return self.update(*args, **kwargs)
+        if instruction == "autocomplete":
+            return self.autocomplete(*args, **kwargs)
         if instruction == "save":
             return self.save(*args, **kwargs)
         if instruction == "pause":
             self.log("pause")
             return "paused"
 
-    def update(self, *args, **kwargs):
+    def update(self, entity, *args, **kwargs):
         self.log(f"update({args},{kwargs})")
-        entity = args[0]
-        args = args[1:]
         if entity == "model":
             return self.model.update(*args, **kwargs)
         if entity == "optimizer":
             return self.optimizer.update(*args, **kwargs)
         if entity == "dataset":
             return self.dataset.update(*args, **kwargs)
-        if entity == "batch_size":
-            self.batch_size = kwargs["batch_size"]
-            return self.batch_size
-        if entity == "example_length":
-            self.example_length = kwargs["example_length"]
-            return self.example_length
+
+
+    def autocomplete(self,
+                     prompt=None,
+                     encoder=None,
+                     decoder=None,
+                     n_generate=128,
+                     max_ctx=32):
+        Categorical = torch.distributions.Categorical
+        decode = self.dataset.decode
+        encode = self.dataset.encode
+        batch = self.dataset.batch
+        example_length = self.dataset.example_length
+
+        if max_ctx is None:
+            max_ctx = example_length - 1
+        if prompt is None:
+            prompt = decode(batch(1, max_ctx).tolist()[0])
+        else:
+            prompt = decode(encode(prompt)) # is this id anyway? ~Apdep=p. Apedp=p?
+        x = encode(prompt)
+        x = x[-max_ctx:]
+        assert len(x) <= max_ctx
+        assert decode(x) == prompt
+        assert encode(prompt) == x
+
+        def sampler(n):
+            for _ in range(n):
+                b = Categorical(self.model.probs(torch.tensor(x, dtype=torch.long,device=device).unsqueeze(0)).view(-1)[-self.model.n_vocab:]).sample().item()
+                x = (x + [c])[-max_ctx:]
+                autocomplete_outbox.put(c) # hook for streaming
+                yield c
+        response = decode(list(sampler(n_generate)))
+        return '<pre><span style="color: #0000ff">' + prompt + '</span>' + response + '</pre>'
 
     def load(self, path):
         self.log(f"load({path})")
@@ -226,8 +273,6 @@ class Worker(ctx.Process):
         self.model = checkpoint["model"]
         self.dataset = make(checkpoint["dataset"])
         self.optimizer = checkpoint["optimizer"]
-        self.batch_size = checkpoint["batch_size"]
-        self.example_length = checkpoint["example_length"]
         self.step = checkpoint["step"]
         self.profile = checkpoint["profile"]
         self.metrics = checkpoint["metrics"]
@@ -238,12 +283,8 @@ class Worker(ctx.Process):
         self.log(f"save({path})")
         checkpoint = {
             "model": self.model,
-            "dataset": {
-                "type": type(self.dataset),
-                "kwargs": self.dataset.kwargs},
+            "dataset": self.dataset,
             "optimizer": self.optimizer,
-            "batch_size": self.batch_size,
-            "example_length": self.example_length,
             "step": self.step,
             "profile": self.profile(),
             "metrics": self.metrics,

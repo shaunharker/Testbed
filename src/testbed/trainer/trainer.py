@@ -28,16 +28,16 @@ class Trainer:
                 "kwargs": dataset_kwargs},
             "optimizer": {
                 "type": OptimizerType,
-                "kwargs": optimizer_kwargs},
-            "batch_size": batch_size,
-            "example_length": example_length}
+                "kwargs": optimizer_kwargs}}
+        assert "max_ctx" in config["model"]["kwargs"]
+        assert "batch_size" in config["dataset"]["kwargs"]
+        assert "example_length" in config["dataset"]["kwargs"]
 
-        trainer = Trainer(config)
+        trainer = Trainer(config=config)
 
     """
     def __init__(self, path=None, config=None):
-        # Check arguments and compute arguments for
-        # worker.
+        # Validate arguments
         if path is None and config is None:
             raise ValueError("Trainer requires either a path or "
                              "a config argument.")
@@ -51,8 +51,17 @@ class Trainer:
             assert "model" in config
             assert "optimizer" in config
             assert "dataset" in config
-            assert "batch_size" in config
-            assert "example_length" in config
+            if type(config["model"]) == dict:
+                assert "max_ctx" in config["model"]["kwargs"]
+            else:
+                assert hasattr(config["model"], "max_ctx")
+            if type(config["dataset"]) == dict:
+                assert "batch_size" in config["dataset"]["kwargs"]
+                assert "example_length" in config["dataset"]["kwargs"]
+            else:
+                assert hasattr(config["dataset"], "batch_size")
+                assert hasattr(config["dataset"], "example_length")
+
             bootargs.update({"config": config})
 
         # main inbox/output communication channels:
@@ -91,8 +100,10 @@ class Trainer:
             daemon=True)
         self.metrics_inbox_daemon.start()
 
+        self.autocomplete_inbox = Queue()
+
         # Boot up the worker. It will be in a "paused" state.
-        self.process = Worker(self.outbox, self.inbox, self.metrics_inbox)
+        self.process = Worker(self.outbox, self.inbox, self.metrics_inbox, self.autocomplete_inbox)
         self.process.start()
         self.inbox.get() # blocks until process is ready
         self.paused = True
@@ -128,9 +139,23 @@ class Trainer:
     def update(self, *args, **kwargs):
         return self.call("update", *args, **kwargs)
 
-    def autocomplete(self, prompt="", output_length=256, max_ctx=512):
-        return self.call("autocomplete", prompt=prompt,
-                         output_length=output_length, max_ctx=max_ctx)
+    def autocomplete(self, prompt="", n_generate=256, max_ctx=512):
+        def sequence():
+            for _ in range(n_generate):
+                while self.process.is_alive():
+                    try:
+                        yield self.autocomplete_inbox.get(block=True, timeout=1.0)
+                    except:
+                        pass
+        thread = threading.Thread(
+            target=self.call,
+            args=("autocomplete",),
+            kwargs=dict(prompt=prompt,
+                        n_generate=n_generate,
+                        max_ctx=max_ctx))
+        thread.start()
+        return self.dataset.decoder(sequence())
+
 
     def status(self):
         return {"paused": self.paused}

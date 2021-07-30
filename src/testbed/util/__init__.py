@@ -1,4 +1,5 @@
 import torch
+from math import log
 from .delaykeyboardinterrupt import DelayKeyboardInterrupt
 from .ignorekeyboardinterrupt import IgnoreKeyboardInterrupt
 from .stopwatch import Stopwatch
@@ -6,6 +7,8 @@ from pathlib import Path
 from functools import lru_cache
 from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlInit
 nvmlInit()
+
+lyles_constant = 9115131782/14818489608 * log(50257)/log(65536) # compression achieved via gpt2-token encoding compared to utf8-byte encoding on gutenberg.utf8
 
 # PyTorch default device
 def default_device():
