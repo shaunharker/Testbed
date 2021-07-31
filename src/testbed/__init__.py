@@ -7,7 +7,7 @@ import testbed.nn
 import testbed.trainer
 import testbed.util
 
-from testbed.dataset import ByteDataset, ShortDataset
+from testbed.dataset import ByteDataset, ShortDataset, SeqByteDataset
 from testbed.nn import Net0, Net1, Net2, Net3, Net4
 from testbed.nn import Transformer
 from testbed.optimizer import Sonny

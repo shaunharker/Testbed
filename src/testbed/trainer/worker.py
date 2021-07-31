@@ -162,7 +162,8 @@ class Worker(ctx.Process):
                 self.dataset = config["dataset"]["type"](
                     **config["dataset"]["kwargs"])
                 self.log(f"dataset constructed")
-            except:
+            except Exception as e:
+                print(e)
                 self.dataset = config["dataset"]
                 self.log(f"dataset received")
             self.minibatches = 1
@@ -283,7 +284,13 @@ class Worker(ctx.Process):
         self.log(f"save({path})")
         checkpoint = {
             "model": self.model,
-            "dataset": self.dataset,
+            "dataset": {
+                "type": type(self.dataset),
+                "kwargs": dict(
+                    path=self.dataset.path,
+                    batch_size=self.dataset.batch_size,
+                    example_length=self.dataset.example_length,
+                    shuffle_blocks=self.dataset.shuffle_blocks)},
             "optimizer": self.optimizer,
             "step": self.step,
             "profile": self.profile(),

@@ -39,27 +39,33 @@ class ByteDataset:
     def __init__(self,
                  path=None,
                  batch_size=None,
-                 example_length=None):
+                 example_length=None,
+                 shuffle_blocks=True):
         self.worker = None
         assert batch_size is not None, "batch_size: int  required"
         assert example_length is not None, "example_length: int required"
         assert example_length <= 512, "example_length <= 512 required"
-        self.update(path=path, batch_size=batch_size, example_length=example_length)
+        self.update(path=path, batch_size=batch_size, example_length=example_length, shuffle_blocks=shuffle_blocks)
 
-    def update(self, path=None, batch_size=None, example_length=None):
+    def update(self, path=None, batch_size=None, example_length=None, shuffle_blocks=True):
         if self.worker is not None:
             self.worker.join()
         if path is None:
-            path = f"/home/{os.environ.get('USERNAME')}/data/gutenberg.1024.utf8"
+            if shuffle_blocks==True:
+                path = f"/home/{os.environ.get('USERNAME')}/data/gutenberg.1024.utf8"
+            else:
+                path = f"/home/{os.environ.get('USERNAME')}/data/gutenberg.utf8"
         self.path = path
         if batch_size is not None:
             self.batch_size = batch_size
         if example_length is not None:
             self.example_length = example_length
+        self.shuffle_blocks = shuffle_blocks
         self.n_bytes = Path(path).stat().st_size
         self.cache = []
         self.cache_shape = (self.batch_size, self.example_length)
         self.worker = None
+        self.block_idx = 0
         self.lock = threading.Lock()
         self.batch_available = threading.Event()
         self.terminate_worker = threading.Event()
@@ -162,10 +168,20 @@ class ByteDataset:
             if len(self.cache) * max_ctx * batch_size > max_cache:
                 return
         assert example_length <= 512
-        def load():
+        def randomload():
             offset = max_ctx*randrange(self.n_bytes - page_size)//max_ctx
             return np.fromfile(self.path, dtype=np.uint8, count=page_size,
                 sep='', offset=offset).reshape(n_examples, max_ctx)
+        def sequentialload():
+            self.block_idx = self.block_idx % (self.n_bytes//max_ctx - n_examples)
+            offset = max_ctx*self.block_idx
+            self.block_idx += 1
+            return np.fromfile(self.path, dtype=np.uint8, count=page_size,
+                sep='', offset=offset).reshape(n_examples, max_ctx)
+        if self.shuffle_blocks:
+            load = randomload
+        else:
+            load = sequentialload
         while self.data.shape[0] < batch_size:
             self.data = np.concatenate((self.data, load()))
         def get_example(idx):
