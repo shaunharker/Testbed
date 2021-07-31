@@ -255,8 +255,6 @@ class Worker(ctx.Process):
         x = encode(prompt)
         x = x[-max_ctx:]
         assert len(x) <= max_ctx
-        assert decode(x) == prompt
-        assert encode(prompt) == x
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
