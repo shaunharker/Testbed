@@ -38,7 +38,7 @@ class Worker(ctx.Process):
             "ingest": 0.0}
         self.metrics = []
         self.logs = []
-        self.last_autocomplete = ''
+        self.last_autocomplete = None
 
     def profile(self):
         return self.info
@@ -243,7 +243,10 @@ class Worker(ctx.Process):
         if max_ctx is None:
             max_ctx = example_length - 1
         if prompt is None:
-            prompt = decode(batch(1, max_ctx).tolist()[0])
+            if self.last_autocomplete is None:
+                prompt = decode(batch(1, max_ctx).tolist()[0])
+            else:
+                prompt = self.last_autocomplete
         else:
             if prompt == "":
                 prompt = " "
