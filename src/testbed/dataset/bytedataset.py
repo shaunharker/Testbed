@@ -52,9 +52,9 @@ class ByteDataset:
             self.worker.join()
         if path is None:
             if shuffle_blocks==True:
-                path = f"/home/{os.environ.get('USERNAME')}/data/gutenberg.1024.utf8"
+                path = f"/home/{os.environ.get('USER')}/data/gutenberg.1024.utf8"
             else:
-                path = f"/home/{os.environ.get('USERNAME')}/data/gutenberg.utf8"
+                path = f"/home/{os.environ.get('USER')}/data/gutenberg.utf8"
         self.path = path
         if batch_size is not None:
             self.batch_size = batch_size

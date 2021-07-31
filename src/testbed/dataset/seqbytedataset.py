@@ -30,7 +30,7 @@ class SeqByteDataset:
 
     def update(self, path=None, batch_size=None, example_length=None):
         if path is None:
-            path = f"/home/{os.environ.get('USERNAME')}/data/gutenberg.utf8"
+            path = f"/home/{os.environ.get('USER')}/data/gutenberg.utf8"
         self.path = path
         if batch_size is not None:
             self.batch_size = batch_size

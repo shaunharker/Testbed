@@ -9,7 +9,7 @@ import numpy as np
 import threading
 
 def default_gpt2_path():
-    return f"/home/{os.environ.get('USERNAME')}/data/corpus.utf8.txt"
+    return f"/home/{os.environ.get('USER')}/data/corpus.utf8.txt"
 
 def filesize_in_bytes(filename):
     return Path(filename).stat().st_size
