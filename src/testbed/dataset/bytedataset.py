@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 import torch
 import types
+import time
 
 class ByteDataset:
     """
@@ -18,20 +19,15 @@ class ByteDataset:
                   which is 14GB of Gutenberg text reencoded in utf8,
                   chopped up into length 1024 pieces, and shuffled.
         batch_size: int
-            the number of examples in a batch
-            currently must be less than or equal to 512
+            the default number of examples in a batch
         example_length: int
-            the number of bytes in an example
-    NOTE:
-        batch_size and example_length are part of the public interface,
-        and do not change unless update is called. The dataset is tuned
-        to efficiently produce batches of size [batch_size, example_length]
-        with examples distributed as approximately iid uniform draws with
-        replacement. If the user requests a smaller size (in one or both
-        dimensions) this can be done less efficiently (by the ratio of elements)
-        but does not disturb the cache. If the shape is larger in either dimension
-        the cache is flushed and refilled which is not performant, but probably
-        acceptable for occasional use.
+            the default number of bytes in an example
+            currently must be less than or equal to 1024
+            note that for example_length near 1024 there are
+            far fewer batches in the entire dataset due to the
+            fact there is only one way an example can fit in a
+            size 1024 window rather than, say, the 512 ways for
+            an example of length 512.
     TODO:
         * Find a way to gracefully support multiple cache sizes
           and be able to adapt to any adversarial sequence of batch requests
@@ -64,10 +60,10 @@ class ByteDataset:
         self.cache = []
         self.cache_shape = (self.batch_size, self.example_length)
         self.worker = None
-        self.cache_lock = threading.Lock()
-        self.cache_available = threading.Event()
-        self.cache_invalid = threading.Event()
-        self.data = None
+        self.lock = threading.Lock()
+        self.batch_available = threading.Event()
+        self.terminate_worker = threading.Event()
+        self.data = np.empty((0,1024),dtype=np.uint8)
 
     def batch(self, batch_size=None, example_length=None):
         """
@@ -75,12 +71,12 @@ class ByteDataset:
         ---------------------------------------------------------------
         DESC: This method returns a batch of batch_size examples
               of length example_length randomly drawn from the dataset
-              Formally, approximate iid uniform sampling with replacement.
+              in a way that approximates iid uniform sampling with replacement.
         ARGS:
             batch_size: int
-                the number of examples in a batch
+                the number of examples in the returned batch
             example_length: int
-                the number of bytes in an example
+                the number of bytes in an example in the returned batch
         RETURNS:
             result:
                 TYPE: torch.Tensor
@@ -98,19 +94,18 @@ class ByteDataset:
         assert example_length <= 512, "example_length <= 512 required"
 
         # Order the worker to make these kind of outputs
-        self._renew_worker_thread(max(batch_size, self.batch_size),
-                                  max(example_length, self.example_length))
+        self._renew_worker_thread(batch_size, example_length)
 
         # Pull the result batch off the cache when it is available.
-        self.cache_available.wait()
-        with self.cache_lock:
-            sample = self.cache.pop()[:batch_size,:example_length]
+        self.batch_available.wait()
+        with self.lock:
+            sample = self.cache.pop()
             if len(self.cache) == 0:
-                self.cache_available.clear()
+                self.batch_available.clear()
 
         # Order the worker to make the default kind of outputs
-        self._renew_worker_thread(self.batch_size, self.example_length)
-        return sample
+        self._renew_worker_thread(batch_size, example_length)
+        return sample.long()
 
     def _renew_worker_thread(self, batch_size, example_length):
         """
@@ -131,14 +126,14 @@ class ByteDataset:
             None
         """
         if (batch_size, example_length) != self.cache_shape:
-            self.cache_invalid.set()
+            self.terminate_worker.set()
             if self.worker is not None:
                 self.worker.join()
-            with self.cache_lock:
+            with self.lock:
                 self.cache = []
                 self.cache_shape = (batch_size, example_length)
-                self.cache_invalid.clear()
-                self.cache_available.clear()
+                self.terminate_worker.clear()
+                self.batch_available.clear()
         if self.worker is None or not self.worker.is_alive():
             self.worker = threading.Thread(
                 target=self._worker,
@@ -150,9 +145,7 @@ class ByteDataset:
         private method _worker(self, batch_size, example_length)
         --------------------------------------------------------
         DESC:
-            This is the code executed by worker threads. It eventually
-            exits on its own unless it can't keep up with demand and
-            never fills the cache up to the desired_cache_size.
+            This is the code executed by worker threads. It
         ARGS:
             batch_size: int
                 the number of examples in a batch
@@ -161,49 +154,35 @@ class ByteDataset:
         RETURNS:
             None
         """
-        page = lambda : np.fromfile(self.path, dtype=np.ubyte, count=2**25, sep='',
-            offset= 1024*(randrange(self.n_bytes - 2**25)//1024)).reshape(-1,1024)
-        if self.data is None:
-            self.data = page()
-        desired_cache_size = max(2**25//(batch_size * example_length), 1)
-        while True:
-            with self.cache_lock:
-                if len(self.cache) > desired_cache_size:
-                    break
-            if self.cache_invalid.is_set():
-                break
-            examples_left = self.data.shape[0]
-            if examples_left < batch_size:
-                self.data = np.concatenate((self.data, page()))
-            result = self._batch(batch_size, example_length)
-            with self.cache_lock:
-                self.cache.append(result)
-                self.cache_available.set()
-
-    def _batch(self, batch_size, example_length):
-        """
-        private method ByteDataset._batch(self, batch_size, example_length)
-        -------------------------------------------------------------------
-        DESC: This is the code that randomly cuts examples
-              from the shuffled stream of examples coming from
-              the file and stacks them into tensors.
-        ARGS:
-            batch_size: int
-                the number of examples in a batch
-            example_length: int
-                the number of bytes in an example
-        RETURNS:
-            result:
-                TYPE: torch.Tensor
-                SHAPE: [batch_size, example_length]
-                DTYPE: torch.uint8
-                DEVICE: 'cuda'
-        """
-        get_example = lambda idx: (lambda a, b, c: a[b:b+c])(
-            self.data[idx], randrange(1024-example_length+1), example_length)
-        result = np.stack([get_example(idx) for idx in range(batch_size)])
+        page_size = 2**20
+        max_ctx = 1024
+        n_examples = page_size // max_ctx
+        max_cache = max(2**25, batch_size * max_ctx)
+        with self.lock:
+            if len(self.cache) * max_ctx * batch_size > max_cache:
+                return
+        assert example_length <= 512
+        def load():
+            offset = max_ctx*randrange(self.n_bytes - page_size)//max_ctx
+            return np.fromfile(self.path, dtype=np.uint8, count=page_size,
+                sep='', offset=offset).reshape(n_examples, max_ctx)
+        while self.data.shape[0] < batch_size:
+            self.data = np.concatenate((self.data, load()))
+        def get_example(idx):
+            offset = randrange(max_ctx-example_length+1)
+            return self.data[idx][offset:offset+example_length]
+        np_batch = np.stack([get_example(idx) for idx in range(batch_size)])
         self.data = self.data[batch_size:,:]
-        return torch.tensor(result, dtype=torch.uint8, device='cuda')
+        while True:
+            try:
+                torch_batch = torch.tensor(np_batch, dtype=torch.uint8, device='cuda')
+                break
+            except:
+                time.sleep(1.0)
+                torch.cuda.empty_cache()
+        with self.lock:
+            self.cache.append(torch_batch)
+            self.batch_available.set()
 
     @staticmethod
     def encode(char_sequence):
@@ -264,7 +243,7 @@ class ByteDataset:
             return b&0b11111000 != 0b11111000
         def is_payload_utf8_byte(b):
             return b&0b11000000 == 0b10000000
-        def is_header_byte(b):
+        def is_header_utf8_byte(b):
             return is_valid_utf8_byte(b) and not is_payload_utf8_byte(b)
         def char_width(b):
             if b&0b10000000 == 0:
@@ -284,7 +263,12 @@ class ByteDataset:
                 elif is_payload_utf8_byte(b):
                     word.append(b)
                 if len(word) == width:
-                    yield bytes(word).decode('utf8')
+                    try:
+                        yield bytes(word).decode('utf8')
+                    except:
+                        # There are still undecodables we catch here.
+                        # e.g. bytes(map(lambda x: int(x,base=2),['0b11000000', '0b10000000'])).decode('utf8') raises UnicodeDecodeError
+                        pass
         if type(byte_sequence) == types.GeneratorType:
             return stream()
         else:

@@ -58,15 +58,17 @@ class Trainer:
             if type(config["dataset"]) == dict:
                 assert "batch_size" in config["dataset"]["kwargs"]
                 assert "example_length" in config["dataset"]["kwargs"]
+                self.decode = config["dataset"]["type"].decode
             else:
                 assert hasattr(config["dataset"], "batch_size")
                 assert hasattr(config["dataset"], "example_length")
-
+                self.decode = config["dataset"].decode
             bootargs.update({"config": config})
 
         # main inbox/output communication channels:
         self.inbox = Queue()
         self.outbox = Queue()
+        self.autocomplete_inbox = Queue()
 
         # self.metrics
         #     is a list that stores data for the client to use.
@@ -99,8 +101,6 @@ class Trainer:
             args=(self.halt, self.metrics_inbox, self.metrics),
             daemon=True)
         self.metrics_inbox_daemon.start()
-
-        self.autocomplete_inbox = Queue()
 
         # Boot up the worker. It will be in a "paused" state.
         self.process = Worker(self.outbox, self.inbox, self.metrics_inbox, self.autocomplete_inbox)
@@ -139,12 +139,14 @@ class Trainer:
     def update(self, *args, **kwargs):
         return self.call("update", *args, **kwargs)
 
-    def autocomplete(self, prompt="", n_generate=256, max_ctx=512):
+    def autocomplete(self, prompt=None, n_generate=256, max_ctx=512):
         def sequence():
-            for _ in range(n_generate):
-                while self.process.is_alive():
+            for idx in range(n_generate):
+                c = None
+                while c is None and self.process.is_alive():
                     try:
-                        yield self.autocomplete_inbox.get(block=True, timeout=1.0)
+                        c = self.autocomplete_inbox.get(block=True, timeout=1.0)
+                        yield c
                     except:
                         pass
         thread = threading.Thread(
@@ -154,8 +156,7 @@ class Trainer:
                         n_generate=n_generate,
                         max_ctx=max_ctx))
         thread.start()
-        return self.dataset.decoder(sequence())
-
+        return self.decode(sequence())
 
     def status(self):
         return {"paused": self.paused}

@@ -27,8 +27,6 @@ class MyLayerNorm(LayerNorm):
         return result
 
 
-
-
 class MyLinear(torch.nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()

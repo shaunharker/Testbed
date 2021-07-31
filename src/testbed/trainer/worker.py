@@ -35,11 +35,10 @@ class Worker(ctx.Process):
             "name": "Worker",
             "time": 0.0,
             "energy": 0.0,
-            "ingest": 0.0,
-            "children": {
-                "model": {}}}
+            "ingest": 0.0}
         self.metrics = []
         self.logs = []
+        self.last_autocomplete = ''
 
     def profile(self):
         return self.info
@@ -91,12 +90,9 @@ class Worker(ctx.Process):
                     self.outbox.put("already started")
             except Empty:
                 pass
-            X = (self.dataset.batch(
+            X = self.dataset.batch(
                     batch_size=self.minibatch_size,
                     example_length=self.dataset.example_length)
-                .to(device='cuda',
-                    dtype=torch.long,
-                    non_blocking=True))
             batch_losses = self.model(X)
             if torch.is_grad_enabled():
                 loss = torch.sum(batch_losses)/torch.numel(batch_losses)
@@ -118,15 +114,16 @@ class Worker(ctx.Process):
                     break
                 self.step += 1
                 self.info["energy"] = self.model.profile()["energy"]
-                # TODO: don't neglect optimizer costs
+                # TODO: don't neglect optimizer costs in energy estimates
                 self.info["ingest"] += self.dataset.batch_size * self.dataset.example_length
                 step_info = {'step': self.step,
                              'time': self.info["time"] + stopwatch.time_elapsed,
-                             'energy': self.info["energy"]/1E12,
+                             'energy': self.info["energy"],
                              'ingest': self.info["ingest"],
-                             'profile': self.info,
+                             'profile': self.model.profile(),
                              'mean_loss': np.mean(batch_losses),
-                             'batch_losses': batch_losses}
+                             'batch_losses': batch_losses,
+                             'last_autocomplete': self.last_autocomplete}
                 self.metrics.append(step_info)
                 self.metrics_outbox.put(step_info)
         self.info["time"] += stopwatch.total_run_time
@@ -232,7 +229,6 @@ class Worker(ctx.Process):
         if entity == "dataset":
             return self.dataset.update(*args, **kwargs)
 
-
     def autocomplete(self,
                      prompt=None,
                      encoder=None,
@@ -244,27 +240,28 @@ class Worker(ctx.Process):
         encode = self.dataset.encode
         batch = self.dataset.batch
         example_length = self.dataset.example_length
-
         if max_ctx is None:
             max_ctx = example_length - 1
         if prompt is None:
             prompt = decode(batch(1, max_ctx).tolist()[0])
         else:
+            if prompt == "":
+                prompt = " "
             prompt = decode(encode(prompt)) # is this id anyway? ~Apdep=p. Apedp=p?
         x = encode(prompt)
         x = x[-max_ctx:]
         assert len(x) <= max_ctx
         assert decode(x) == prompt
         assert encode(prompt) == x
-
-        def sampler(n):
-            for _ in range(n):
-                b = Categorical(self.model.probs(torch.tensor(x, dtype=torch.long,device=device).unsqueeze(0)).view(-1)[-self.model.n_vocab:]).sample().item()
-                x = (x + [c])[-max_ctx:]
-                autocomplete_outbox.put(c) # hook for streaming
-                yield c
-        response = decode(list(sampler(n_generate)))
-        return '<pre><span style="color: #0000ff">' + prompt + '</span>' + response + '</pre>'
+        def sampler(x):
+            x = list(x)
+            for _ in range(n_generate):
+                y = Categorical(self.model.probs(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab:]).sample().item()
+                x = (x + [y])[-max_ctx:]
+                self.autocomplete_outbox.put(y) # hook for streaming
+                yield y
+        self.last_autocomplete = decode(list(sampler(x)))
+        return self.last_autocomplete
 
     def load(self, path):
         self.log(f"load({path})")
