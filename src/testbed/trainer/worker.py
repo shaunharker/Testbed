@@ -251,10 +251,10 @@ class Worker(ctx.Process):
         else:
             if prompt == "":
                 prompt = " "
-            prompt = decode(encode(prompt)) # is this id anyway? ~Apdep=p. Apedp=p?
+            prompt = decode(encode(prompt))
         x = encode(prompt)
         x = x[-max_ctx:]
-        assert len(x) <= max_ctx
+        assert len(x) <= max_ctx, f"x={x} max_ctx={max_ctx}"
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
@@ -287,8 +287,7 @@ class Worker(ctx.Process):
                 "kwargs": dict(
                     path=self.dataset.path,
                     batch_size=self.dataset.batch_size,
-                    example_length=self.dataset.example_length,
-                    shuffle_blocks=self.dataset.shuffle_blocks)},
+                    example_length=self.dataset.example_length)},
             "optimizer": self.optimizer,
             "step": self.step,
             "profile": self.profile(),
