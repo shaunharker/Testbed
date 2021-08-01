@@ -77,7 +77,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.key_projection = MyLinear(d_model, d_k * n_heads)
         self.value_projection = MyLinear(d_model, d_v * n_heads)
         self.output_projection = MyLinear(d_v * n_heads, d_model)
-        self.dropout = Dropout(p_dropout_attn)
+        self.dropout = Dropout(p_dropout)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.info = {
             "name": "MultiHeadSelfAttention",
@@ -90,6 +90,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
                 "value_projection": {"energy": 0.0, "time": 0.0},
                 "split_heads": {"energy": 0.0, "time": 0.0},
                 "matmul(Q,K^T)": {"energy": 0.0, "time": 0.0},
+                "dropout_attention": {"energy": 0.0, "time": 0.0},
                 "masking_attention": {"energy": 0.0, "time": 0.0},
                 "compute_attention": {"energy": 0.0, "time": 0.0},
                 "matmul(A,V)": {"energy": 0.0, "time": 0.0},
@@ -151,9 +152,9 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.info["children"]["matmul(Q,K^T)"]["time"] += time() - t
 
         t = time()
-        Z = self.dropout(Z)
+        QKT = self.dropout(QKT)
         torch.cuda.synchronize()
-        self.info["children"]["dropout_attention"]["energy"] += 4.0 * (torch.numel(Z)) # ?
+        self.info["children"]["dropout_attention"]["energy"] += 16.0 * (torch.numel(QKT)) # ?
         self.info["children"]["dropout_attention"]["time"] += time() - t
 
         t = time()
@@ -165,7 +166,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
         t = time()
         A = self.softmax(Z)
         torch.cuda.synchronize()
-        self.info["children"]["compute_attention"]["energy"] += 5.0 * (torch.numel(A)) # ?
+        self.info["children"]["compute_attention"]["energy"] += 15.0 * (torch.numel(A)) # ?
         self.info["children"]["compute_attention"]["time"] += time() - t
 
         t = time()
@@ -260,7 +261,8 @@ class TransformerLayer(torch.nn.Module):
         self.d_model = d_model
         self.n_heads = n_heads
         self.d_ff = d_ff
-        self.p_dropout = p_dropout
+        self.p_dropout_attn = p_dropout_attn
+        self.p_dropout_ff = p_dropout_ff
         self.multiheadselfattention = MultiHeadSelfAttention(d_model, n_heads, p_dropout_attn)
         self.feedforward = FeedForward(d_model, d_ff, p_dropout_ff)
         self.info = {
