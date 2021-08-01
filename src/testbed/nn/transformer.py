@@ -65,10 +65,11 @@ def additive_lt_mask(n_ctx, device):
 
 
 class MultiHeadSelfAttention(torch.nn.Module):
-    def __init__(self, d_model, n_heads):
+    def __init__(self, d_model, n_heads, p_dropout):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
+        self.p_dropout = p_dropout
         d_head = d_k = d_v = d_model // n_heads # assume these are equal for this implementation
         self.d_head = d_head
         self.layernorm = MyLayerNorm(d_model)
@@ -76,6 +77,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.key_projection = MyLinear(d_model, d_k * n_heads)
         self.value_projection = MyLinear(d_model, d_v * n_heads)
         self.output_projection = MyLinear(d_v * n_heads, d_model)
+        self.dropout = Dropout(p_dropout_attn)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.info = {
             "name": "MultiHeadSelfAttention",
@@ -149,6 +151,12 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.info["children"]["matmul(Q,K^T)"]["time"] += time() - t
 
         t = time()
+        Z = self.dropout(Z)
+        torch.cuda.synchronize()
+        self.info["children"]["dropout_attention"]["energy"] += 4.0 * (torch.numel(Z)) # ?
+        self.info["children"]["dropout_attention"]["time"] += time() - t
+
+        t = time()
         Z = QKT + additive_lt_mask(n_ctx, device=QKT.device)
         torch.cuda.synchronize()
         self.info["children"]["masking_attention"]["energy"] += 4.0 * (torch.numel(Z)) # ?
@@ -204,13 +212,14 @@ class MyGELU(torch.nn.Module):
 
 
 class FeedForward(torch.nn.Module):
-    def __init__(self, d_model, d_ff):
+    def __init__(self, d_model, d_ff, p_dropout):
         super().__init__()
         self.d_model = d_model
         self.d_ff = d_ff
         self.layernorm = MyLayerNorm(d_model)
         self.layer0 = MyLinear(d_model, d_ff)
         self.nonlinear = MyGELU(d_ff)
+        self.dropout = Dropout(p_dropout)
         self.layer1 = MyLinear(d_ff, d_model)
         self.info = {
             "name": "FeedForward",
@@ -238,6 +247,7 @@ class FeedForward(torch.nn.Module):
         x = self.layernorm(x)
         x = self.layer0(x)
         x = self.nonlinear(x)
+        x = self.dropout(x)
         x = self.layer1(x)
         torch.cuda.synchronize()
         self.info["time"] += time() - start_time
@@ -245,13 +255,14 @@ class FeedForward(torch.nn.Module):
 
 
 class TransformerLayer(torch.nn.Module):
-    def __init__(self, d_model=64, n_heads=8, d_ff=2048):
+    def __init__(self, d_model=64, n_heads=8, d_ff=2048, p_dropout_attn=0.1, p_dropout_ff=0.1):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
         self.d_ff = d_ff
-        self.multiheadselfattention = MultiHeadSelfAttention(d_model, n_heads)
-        self.feedforward = FeedForward(d_model, d_ff)
+        self.p_dropout = p_dropout
+        self.multiheadselfattention = MultiHeadSelfAttention(d_model, n_heads, p_dropout_attn)
+        self.feedforward = FeedForward(d_model, d_ff, p_dropout_ff)
         self.info = {
             "name": "TransformerLayer",
             "time": 0.0,
@@ -307,7 +318,7 @@ class MyEmbedding(torch.nn.Module):
 
 class Transformer(torch.nn.Module):
     """
-    Transformer for Generative Language Model; similar to GPT2's design.
+    Transformer for Generative Language Model
     """
     def __init__(self,
                  n_vocab=256,
@@ -317,7 +328,10 @@ class Transformer(torch.nn.Module):
                  n_heads=12,
                  d_ff=4096,
                  n_layers=12,
-                 lyles_constant=1.0):
+                 p_dropout_in=0.1,
+                 p_dropout_attn=0.1,
+                 p_dropout_ff=0.1,
+                 p_dropout_out=0.1):
         super().__init__()
         self.n_vocab = n_vocab
         self.max_ctx = max_ctx
@@ -325,12 +339,17 @@ class Transformer(torch.nn.Module):
         self.n_heads = n_heads
         self.d_ff = d_ff
         self.n_layers = n_layers
-        self.lyles_constant = lyles_constant
+        self.p_dropout_in = p_dropout_in
+        self.p_dropout_attn = p_dropout_attn
+        self.p_dropout_ff = p_dropout_ff
+        self.p_dropout_out = p_dropout_out
+
         self.input_embedding = MyEmbedding(n_vocab, d_model)
+        self.dropout_in = Dropout(p_dropout_in)
         self.positional_encoding = torch.nn.Parameter(0.02*torch.randn(max_ctx, d_model))
-        self.layers = ModuleList([TransformerLayer(d_model, n_heads, d_ff)
-                                  for _ in range(n_layers)])
+        self.layers = ModuleList([TransformerLayer(d_model,n_heads,d_ff,p_dropout_attn,p_dropout_ff) for _ in range(n_layers)])
         self.layernorm = MyLayerNorm(d_model)
+        self.dropout_out = Dropout(p_dropout_out)
         self.lm_head = MyLinear(d_model, n_vocab)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.criterion = CrossEntropyLoss(reduction='none')
@@ -350,8 +369,7 @@ class Transformer(torch.nn.Module):
             "layers": [layer.profile() for layer in self.layers],
             "layernorm": self.layernorm.profile(),
             "lm_head": self.lm_head.profile()})
-        self.info["energy"] = (sum(info["energy"] for info in self.info["children"]["layers"]) +
-                               self.info["children"]["layernorm"]["energy"])
+        self.info["energy"] = (sum(info["energy"] for info in self.info["children"]["layers"]) + self.info["children"]["layernorm"]["energy"])
         return self.info
 
     @autocast()
@@ -375,6 +393,7 @@ class Transformer(torch.nn.Module):
             Y = X[...,1:].contiguous()
             X = X[...,:-1].contiguous()
         X = self.input_embedding(X)
+        X = self.dropout_in(X)
         n_ctx = X.shape[-2]
         assert n_ctx <= self.max_ctx
         # Now X has shape [..., n_ctx, d_model] and Y has shape [..., n_ctx]
@@ -383,16 +402,14 @@ class Transformer(torch.nn.Module):
         for (idx, layer) in enumerate(self.layers):
             X = layer(X)
         X = self.layernorm(X)
+        X = self.dropout_out(X)
         X = self.lm_head(X)
         assert X.shape[-1] == self.n_vocab
         # Now X has shape [..., n_ctx, n_vocab] and Y has shape [..., n_ctx]
         if probs:
             result = self.softmax(X)
         else:
-            result = self.criterion(X.view(-1,self.n_vocab),Y.view(-1))/math.log(self.n_vocab)
-            # we make a neat weighted combination that doesn't draw so much from first half
-            s = X.shape[:-2]
-            result = torch.mean(2.0 * result.view(s + (n_ctx,)) * torch.arange(0, n_ctx, 1, device=result.device)/ (n_ctx), dim=-1)*self.lyles_constant # or a matrix vector product, would that work faster despite being equiv?
+            result = self.criterion(X[...,n_ctx//2:,:].view(-1,self.n_vocab),Y[...,n_ctx//2:].view(-1)).view(X.shape[:-2]+(-1,))/math.log(self.n_vocab)
         torch.cuda.synchronize()
         self.info["time"] += time() - start_time
         return result
