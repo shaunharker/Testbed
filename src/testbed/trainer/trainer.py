@@ -29,7 +29,6 @@ class Trainer:
             "optimizer": {
                 "type": OptimizerType,
                 "kwargs": optimizer_kwargs}}
-        assert "max_ctx" in config["model"]["kwargs"]
         assert "batch_size" in config["dataset"]["kwargs"]
         assert "example_length" in config["dataset"]["kwargs"]
 
@@ -51,10 +50,6 @@ class Trainer:
             assert "model" in config
             assert "optimizer" in config
             assert "dataset" in config
-            if type(config["model"]) == dict:
-                assert "max_ctx" in config["model"]["kwargs"]
-            else:
-                assert hasattr(config["model"], "max_ctx")
             if type(config["dataset"]) == dict:
                 assert "batch_size" in config["dataset"]["kwargs"]
                 assert "example_length" in config["dataset"]["kwargs"]

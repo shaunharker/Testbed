@@ -5,3 +5,7 @@ from .net3 import Net3
 from .net4 import Net4
 
 from .transformer import Transformer
+from .mytransformer import MyTransformer
+from .mlp import MLP
+from .sequential import Sequential
+from .residualdropoutlayernorm import ResidualDropoutLayerNorm

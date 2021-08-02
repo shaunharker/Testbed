@@ -3,7 +3,7 @@ import torch.multiprocessing
 import torch
 ctx = torch.multiprocessing.get_context("spawn")
 from queue import Empty
-from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_allocated, memory_free
+from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_allocated, memory_free, numel
 import time
 import json
 import numpy as np
@@ -39,9 +39,6 @@ class Worker(ctx.Process):
         self.metrics = []
         self.logs = []
         self.last_autocomplete = None
-
-    def profile(self):
-        return self.info
 
     def log(self, *args, **kwargs):
         log_message = {
@@ -113,14 +110,13 @@ class Worker(ctx.Process):
                     job = e.job
                     break
                 self.step += 1
-                self.info["energy"] = self.model.profile()["energy"]
+                self.info["energy"] = 0 #self.model.profile()["energy"]
                 # TODO: don't neglect optimizer costs in energy estimates
                 self.info["ingest"] += self.dataset.batch_size * self.dataset.example_length
                 step_info = {'step': self.step,
                              'time': self.info["time"] + stopwatch.time_elapsed,
                              'energy': self.info["energy"],
                              'ingest': self.info["ingest"],
-                             'profile': self.model.profile(),
                              'mean_loss': np.mean(batch_losses),
                              'batch_losses': batch_losses,
                              'last_autocomplete': self.last_autocomplete}
@@ -144,7 +140,7 @@ class Worker(ctx.Process):
             try:
                 self.model = config["model"]["type"](
                     **config["model"]["kwargs"]).to('cuda')
-                self.log(f"model constructed")
+                self.log(f"model constructed, number of parameters = {numel(self.model)}")
             except Exception as e:
                 print(e)
                 self.model = config["model"]
@@ -214,7 +210,10 @@ class Worker(ctx.Process):
         if instruction == "update":
             return self.update(*args, **kwargs)
         if instruction == "autocomplete":
-            return self.autocomplete(*args, **kwargs)
+            with Stopwatch() as stopwatch:
+                result = self.autocomplete(*args, **kwargs)
+            self.log(f"autocomplete finished in {stopwatch.total_run_time}s")
+            return result
         if instruction == "save":
             return self.save(*args, **kwargs)
         if instruction == "pause":
@@ -258,7 +257,7 @@ class Worker(ctx.Process):
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
-                y = Categorical(self.model.probs(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab:]).sample().item()
+                y = Categorical(self.model.probs(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
                 x = (x + [y])[-max_ctx:]
                 self.autocomplete_outbox.put(y) # hook for streaming
                 yield y
@@ -273,7 +272,6 @@ class Worker(ctx.Process):
         self.dataset = make(checkpoint["dataset"])
         self.optimizer = checkpoint["optimizer"]
         self.step = checkpoint["step"]
-        self.profile = checkpoint["profile"]
         self.metrics = checkpoint["metrics"]
         self.logs = checkpoint["logs"]
         return "loaded"
@@ -290,7 +288,6 @@ class Worker(ctx.Process):
                     example_length=self.dataset.example_length)},
             "optimizer": self.optimizer,
             "step": self.step,
-            "profile": self.profile(),
             "metrics": self.metrics,
             "logs": self.logs}
         torch.save(checkpoint, path)
