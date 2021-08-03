@@ -12,7 +12,6 @@ class ResidualDropoutLayerNorm(Module):
         self.dropout = Dropout(p_dropout)
         self.layernorm = LayerNorm(d_model)
 
-    @autocast()
     def forward(self, x):
         assert x.shape[-1] == self.d_model, f"{x.shape[-1]} != {self.d_model}"
         return self.layernorm(x+self.dropout(self.layer(x)))

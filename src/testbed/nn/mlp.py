@@ -16,6 +16,5 @@ class MLP(Module):
                 {"sigmoid": Sigmoid(), "ReLU": ReLU(), "GELU": GELU()}[nonlinearity],
                 Linear(d_ff, d_model, bias=False)))
 
-    @autocast()
     def forward(self, x):
         return self.mlp(x)

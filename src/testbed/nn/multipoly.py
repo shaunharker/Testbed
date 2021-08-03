@@ -48,6 +48,5 @@ class MultiPoly(Module):
         self.coefs = torch.nn.Parameter(torch.zeros([degree+1] + shape))
         self.fun = multipoly.apply
 
-#    @autocast()
     def forward(self, x):
         return self.fun(torch.sigmoid(x), self.coefs)

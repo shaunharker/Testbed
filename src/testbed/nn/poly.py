@@ -56,6 +56,5 @@ class Poly(Module):
         self.coefs = torch.nn.Parameter(torch.zeros(degree+1))
         self.fun = poly.apply
 
-#    @autocast()
     def forward(self, x):
         return self.fun(torch.sin(x), self.coefs)

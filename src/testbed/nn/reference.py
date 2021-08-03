@@ -19,7 +19,6 @@ class MyEmbedding(torch.nn.Module):
     def profile(self):
         return self.info
 
-    @autocast()
     def forward(self, x):
         start_time = time()
         shape = x.shape + (self.d_model,)
@@ -45,7 +44,6 @@ class MyLinear(torch.nn.Module):
     def profile(self):
         return self.info
 
-    @autocast()
     def forward(self, x):
         start_time = time()
         y = x @ self.weight + self.bias
@@ -69,7 +67,6 @@ class MyGELU(torch.nn.Module):
     def profile(self):
         return self.info
 
-    @autocast()
     def forward(self, x):
         start_time = time()
         x = self.gelu(x)
@@ -91,7 +88,6 @@ class MyLayerNorm(LayerNorm):
     def profile(self):
         return self.info
 
-    @autocast()
     def forward(self, x):
         start_time = time()
         result = super().forward(x)

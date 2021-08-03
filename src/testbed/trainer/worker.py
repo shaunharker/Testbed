@@ -51,6 +51,8 @@ class Worker(ctx.Process):
         print(json.dumps(log_message, indent=4))
 
     def closure(self):
+        self.minibatches = 1
+        self.minibatch_size = self.dataset.batch_size
         while True:
             try:
                 return self._closure()
