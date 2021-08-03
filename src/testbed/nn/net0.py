@@ -1,6 +1,6 @@
 import math
 import torch
-from torch.nn import Module, Embedding, Linear, CrossEntropyLoss, Softmax
+from torch.nn import Module, Embedding, Linear, CrossEntropyLoss, Softmax, Sigmoid, ReLU, GELU
 from torch.cuda.amp import autocast
 from .mlp import MLP
 from .sequential import Sequential
@@ -30,6 +30,7 @@ class Net0(Module):
                 Embedding(n_vocab_in, d_model),
                 Lambda(lambda x: x.view(-1,n_ctx*d_model)),
                 Linear(n_ctx*d_model, d_ff),
+                {"sigmoid": Sigmoid(), "ReLU": ReLU(), "GELU": GELU()}[nonlinearity],
                 Linear(d_ff, n_vocab_out)))
         self.criterion = CrossEntropyLoss(reduction='none')
         self.softmax = Softmax(dim=-1)
