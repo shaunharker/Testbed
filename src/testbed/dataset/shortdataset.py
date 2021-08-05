@@ -100,3 +100,18 @@ class ShortDataset:
             if self.count > count:
                 self._refresh_line()
                 count = self.count
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['loader']
+        del state['lock']
+        del state['data']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.count = 0
+        self.loader = threading.Thread(target=self._loading_daemon, daemon=True)
+        self.lock = threading.Lock()
+        self._cache_lines(1)
+        self.loader.start()

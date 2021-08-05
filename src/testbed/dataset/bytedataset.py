@@ -289,3 +289,17 @@ class ByteDataset:
             return stream()
         else:
             return ''.join(list(stream()))
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['worker']
+        del state['cache']
+        del state['lock']
+        del state['batch_available']
+        del state['terminate_worker']
+        del state['data']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.update(path=self.path, batch_size=self.batch_size, example_length=self.example_length, shuffle_blocks=self.shuffle_blocks)
