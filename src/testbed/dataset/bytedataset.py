@@ -302,4 +302,5 @@ class ByteDataset:
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        self.worker = None
         self.update(path=self.path, batch_size=self.batch_size, example_length=self.example_length, shuffle_blocks=self.shuffle_blocks)

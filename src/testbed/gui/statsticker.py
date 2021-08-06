@@ -1,62 +1,46 @@
 from bokeh.io import push_notebook, show, output_notebook
-from bokeh.models import HoverTool, ColumnDataSource
 from bokeh.plotting import figure
 output_notebook()
 import time, math
-import numpy as np
-from threading import Thread, Lock
+from threading import Thread, Event, Lock
 
 class StatsTicker:
-    def __init__(self, metrics, x='time', y='mean_loss', kind='line'):
-        self.tick = 0
-        self.metrics = metrics
-        self.bokeh = {}
-        self.bokeh_handle = None
-        self.updating = False
-        self.kind = kind
+    def __init__(self, trainer, x='time', y='mean_loss'):
+        self.trainer = trainer
         self.x = x
         self.y = y
+        self.stop_event = Event()
+        self.bokeh = {}
 
     def __repr__(self):
-        self.display()
+        self.stop_event.set()
+        self.stop_event = Event()
+        with self.trainer.metrics_lock:
+            self.bokeh["figure"] = figure(x_axis_label=self.x.replace('_',' '), y_axis_label=self.y.replace('_',' '), tools="pan,wheel_zoom,box_zoom,reset")
+            self.bokeh["figure"].axis.major_label_text_font_size = "24px"
+            self.bokeh["data"] = self.bokeh["figure"].line([],[])
+            self.bokeh_handle = show(self.bokeh["figure"], notebook_handle=True)
+            self.updater = Thread(target=StatsTicker._update_loop, args=(self.stop_event, self.x, self.y, self.bokeh, self.bokeh_handle, self.trainer), daemon=True)
+            self.updater.start()
         return ""
 
-    def display(self, updates=True):
-        TOOLS="pan,wheel_zoom,box_zoom,reset"
-        self.bokeh["figure"] = figure(tools=TOOLS)
-        self.bokeh["figure"].axis.major_label_text_font_size = "24px"
-        self.tick = 0
-        data = {self.x : [], self.y : []}
-        if self.kind == 'line':
-            self.bokeh["data"] = self.bokeh["figure"].line(data[self.x],data[self.y])
-        else:
-            self.bokeh["data"] = self.bokeh["figure"].circle(data[self.x],data[self.y])
-        self.bokeh_handle = show(self.bokeh["figure"], notebook_handle=True)
-        if updates:
-            self.start()
+    def __del__(self):
+        self.stop_event.set()
 
-    def start(self):
-        if not self.updating:
-            self.updating = True
-            self.updater = Thread(target=StatsTicker._update_loop, args=(self,), daemon=True)
-            self.updater.start()
-
-    def stop(self):
-        if self.updating:
-            self.updating = False
-            self.updater.join()
-
-    def data_tail(self, tick=0):
-        data = {self.x : [ item[self.x] for item in self.metrics[tick:]],
-                self.y : [ item[self.y] for item in self.metrics[tick:]]}
-        return data
-
-    def _update_loop(self):
-        while self.updating:
-            time.sleep(1)
-            data = self.data_tail(self.tick)
-            if len(data) > 0:
-                self.bokeh["data"].data_source.stream({'x':data[self.x],
-                                                       'y':data[self.y]})
-                self.tick = len(self.metrics)
-            push_notebook(handle=self.bokeh_handle)
+    @staticmethod
+    def _update_loop(stop_event, x, y, bokeh, bokeh_handle, trainer):
+        tick = 0
+        while not stop_event.is_set():
+            try:
+                time.sleep(1)
+                with trainer.metrics_lock:
+                    data = {x: [item[x] for item in trainer.metrics[tick:]], y: [item[y] for item in trainer.metrics[tick:]]}
+                    if len(data) > 0:
+                        if stop_event.is_set():
+                            break
+                        bokeh["data"].data_source.stream({'x': data[x], 'y': data[y]})
+                        tick = len(trainer.metrics)
+                push_notebook(handle=bokeh_handle)
+            except Exception as e:
+                print(e)
+                break

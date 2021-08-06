@@ -4,7 +4,7 @@ Process = ctx.Process
 Queue = ctx.Queue
 from .worker import Worker
 import threading
-
+from threading import Lock
 
 class Trainer:
     """
@@ -81,6 +81,7 @@ class Trainer:
         #     is an event that signals to self.metrics_inbox_daemon
         #     to break from its event loop and shut down.
 
+        self.metrics_lock = Lock()
         self.metrics = []
         self.metrics_inbox = Queue()
         self.halt = threading.Event()
@@ -88,7 +89,8 @@ class Trainer:
             while not halt.is_set():
                 try:
                     item = metrics_inbox.get(block=True,timeout=1.0)
-                    metrics.append(item)
+                    with self.metrics_lock:
+                        metrics.append(item)
                 except:
                     pass
         self.metrics_inbox_daemon = threading.Thread(
@@ -130,6 +132,10 @@ class Trainer:
 
     def save(self, path="checkpoint.pt"):
         return self.call("save", path=path)
+
+    def load(self, path="checkpoint.pt"):
+        with self.metrics_lock:
+            self.metrics = self.call("load", path=path)
 
     def update(self, *args, **kwargs):
         return self.call("update", *args, **kwargs)

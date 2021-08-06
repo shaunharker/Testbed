@@ -218,6 +218,8 @@ class Worker(ctx.Process):
             return result
         if instruction == "save":
             return self.save(*args, **kwargs)
+        if instruction == "load":
+            return self.load(*args, **kwargs)
         if instruction == "pause":
             self.log("pause")
             return "paused"
@@ -249,6 +251,9 @@ class Worker(ctx.Process):
                 prompt = decode(batch(1, max_ctx).tolist()[0])
             else:
                 prompt = self.last_autocomplete
+                # sloppy, but meh:
+                for _ in range(32):
+                    prompt = prompt.replace('\n\n','\n').replace('\r', '').replace('__', '_').replace('""', '"')
         else:
             if prompt == "":
                 prompt = " "
@@ -263,34 +268,35 @@ class Worker(ctx.Process):
                 x = (x + [y])[-max_ctx:]
                 self.autocomplete_outbox.put(y) # hook for streaming
                 yield y
-        self.last_autocomplete = decode(list(sampler(x)))
+        try:
+            self.last_autocomplete = decode(list(sampler(x)))
+        except:
+            # if something is wrong (i.e. too many repeated characters shortened prompt too much for some model to accept), just autocomplete a random snippet
+            prompt = decode(batch(1, max_ctx).tolist()[0])
+            x = encode(prompt)
+            x = x[-max_ctx:]
+            self.last_autocomplete = decode(list(sampler(x)))
         return self.last_autocomplete
-
-    def load(self, path):
-        self.log(f"load({path})")
-        checkpoint = torch.load(path)
-        make = lambda x: x["type"](**x["kwargs"])
-        self.model = checkpoint["model"]
-        self.dataset = make(checkpoint["dataset"])
-        self.optimizer = checkpoint["optimizer"]
-        self.step = checkpoint["step"]
-        self.metrics = checkpoint["metrics"]
-        self.logs = checkpoint["logs"]
-        return "loaded"
 
     def save(self, path):
         self.log(f"save({path})")
         checkpoint = {
             "model": self.model,
-            "dataset": {
-                "type": type(self.dataset),
-                "kwargs": dict(
-                    path=self.dataset.path,
-                    batch_size=self.dataset.batch_size,
-                    example_length=self.dataset.example_length)},
+            "dataset": self.dataset, # just the filename and settings
             "optimizer": self.optimizer,
             "step": self.step,
             "metrics": self.metrics,
             "logs": self.logs}
         torch.save(checkpoint, path)
         return "saved"
+
+    def load(self, path):
+        self.log(f"load({path})")
+        checkpoint = torch.load(path)
+        self.model = checkpoint["model"]
+        self.dataset = checkpoint["dataset"]
+        self.optimizer = checkpoint["optimizer"]
+        self.step = checkpoint["step"]
+        self.metrics = checkpoint["metrics"]
+        self.logs = checkpoint["logs"]
+        return self.metrics
