@@ -102,14 +102,16 @@ class Worker(ctx.Process):
 
     def train(self):
         self.log("train")
+        next_job = {"instruction": "pause", "args": None, "kwargs": None}
         with Stopwatch() as stopwatch:
-            while True:
+            while self.breakpoint_step is None or self.step < self.breakpoint_step:
                 if not self.parent.is_alive():
                     raise RuntimeError("Parent process is not alive.")
                 try:
                     batch_losses = self.optimizer.step(self.closure)
                 except JobInterrupt as e:
-                    job = e.job
+                    next_job = e.job
+                    self.log(f"train interrupted by JobInterrupt({next_job})")
                     break
                 self.step += 1
                 self.info["energy"] = 0 #self.model.profile()["energy"]
@@ -125,8 +127,8 @@ class Worker(ctx.Process):
                 self.metrics.append(step_info)
                 self.metrics_outbox.put(step_info)
         self.info["time"] += stopwatch.total_run_time
-        self.log(f"JobInterrupt({job})")
-        return job
+        self.log(f"train reached breakpoint_step {self.breakpoint_step}")
+        return next_job
 
     def run(self):
         self.log(f"Worker.run")
@@ -186,18 +188,19 @@ class Worker(ctx.Process):
                                            *job["args"],
                                            **job["kwargs"])
                     self.outbox.put(result)
-                    if job["instruction"] == "stop":
+                    if job["instruction"] == "terminate":
                         break
                 except Empty:
                     if not self.parent.is_alive():
                         self.log("orphaned")
                         break
-        self.log("terminate")
+        self.log("terminated")
 
     def dispatch(self, instruction, *args, **kwargs):
         self.log(f"dispatch({instruction, kwargs}")
         if instruction == "start":
             self.log("start")
+            self.breakpoint_step = kwargs["breakpoint_step"]
             self.outbox.put("started")
             job = self.train()
             instruction = job["instruction"]
@@ -206,9 +209,8 @@ class Worker(ctx.Process):
             assert instruction != "start"
             # ... and then case fall-through to handle
             #     the job that train was interrupted by
-        if instruction == "stop":
-            self.log("stop")
-            return "stopped"
+        if instruction == "terminate":
+            return "terminated"
         if instruction == "update":
             return self.update(*args, **kwargs)
         if instruction == "autocomplete":
