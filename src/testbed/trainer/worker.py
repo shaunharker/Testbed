@@ -7,6 +7,13 @@ from ..util import IgnoreKeyboardInterrupt, Stopwatch, default_device, memory_al
 import time
 import json
 import numpy as np
+from threading import Thread, Event
+
+class AlreadyTrainingError(Exception):
+    pass
+
+class StopTrainThread(Exception):
+    pass
 
 class JobInterrupt(Exception):
     def __init__(self, job):
@@ -16,11 +23,15 @@ class JobInterrupt(Exception):
 class Worker(ctx.Process):
     def __init__(self, inbox, outbox, metrics_outbox, autocomplete_outbox):
         super().__init__(daemon=True)
-        # Communication
+        # Communication queues
         self.inbox = inbox
         self.outbox = outbox
         self.metrics_outbox = metrics_outbox
         self.autocomplete_outbox = autocomplete_outbox
+
+        # Thread control
+        self.thread = None
+        self.terminate_event = Event()
 
         # Major objects
         self.model = None
@@ -49,86 +60,6 @@ class Worker(ctx.Process):
         log_message.update(kwargs)
         self.logs.append(log_message)
         print(json.dumps(log_message, indent=4))
-
-    def closure(self):
-        self.minibatches = 1
-        self.minibatch_size = self.dataset.batch_size
-        while True:
-            try:
-                return self._closure()
-            except RuntimeError as e: # CUDA OOM
-                if "CUDA" in str(e): # false positives?
-                    torch.cuda.empty_cache()
-                    self.minibatches *= 2
-                    self.minibatch_size = self.dataset.batch_size // self.minibatches
-                    if self.minibatch_size == 0:
-                        raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
-                    f = memory_free()
-                    a = memory_allocated()
-                    self.log(f"Splitting batch of {self.dataset.batch_size} examples into "
-                             f"{self.minibatches} minibatches of size {self.minibatch_size} "
-                             f"due to memory constraints.\n",
-                             batch_size=self.dataset.batch_size,
-                             example_length=self.dataset.example_length,
-                             cuda_memory={"free": f"{f//2**20}MiB",
-                                          "allocated": f"{a//2**20}MiB",
-                                          "total": f"{(f+a)//2**20}MiB"})
-                else:
-                    raise e
-
-    def _closure(self):
-        if torch.is_grad_enabled():
-            self.optimizer.zero_grad()
-        Y = []
-        for _ in range(self.minibatches):
-            try:
-                job = self.inbox.get(False)
-                if job["instruction"] != "start":
-                    raise JobInterrupt(job)
-                else:
-                    self.outbox.put("already started")
-            except Empty:
-                pass
-            X = self.dataset.batch(
-                    batch_size=self.minibatch_size,
-                    example_length=self.dataset.example_length)
-            batch_losses = self.model(X)
-            if torch.is_grad_enabled():
-                loss = torch.sum(batch_losses)/torch.numel(batch_losses)
-                loss.backward()
-            Y.append(batch_losses.detach())
-        Y = torch.cat(Y)
-        return Y.cpu().numpy()
-
-    def train(self):
-        self.log("train")
-        next_job = {"instruction": "pause", "args": None, "kwargs": None}
-        with Stopwatch() as stopwatch:
-            while self.breakpoint_step is None or self.step < self.breakpoint_step:
-                if not self.parent.is_alive():
-                    raise RuntimeError("Parent process is not alive.")
-                try:
-                    batch_losses = self.optimizer.step(self.closure)
-                except JobInterrupt as e:
-                    next_job = e.job
-                    self.log(f"train interrupted by JobInterrupt({next_job})")
-                    break
-                self.step += 1
-                self.info["energy"] = 0 #self.model.profile()["energy"]
-                # TODO: don't neglect optimizer costs in energy estimates
-                self.info["ingest"] += self.dataset.batch_size * self.dataset.example_length
-                step_info = {'step': self.step,
-                             'time': self.info["time"] + stopwatch.time_elapsed,
-                             'energy': self.info["energy"],
-                             'ingest': self.info["ingest"],
-                             'mean_loss': np.mean(batch_losses),
-                             'batch_losses': batch_losses,
-                             'last_autocomplete': self.last_autocomplete}
-                self.metrics.append(step_info)
-                self.metrics_outbox.put(step_info)
-        self.info["time"] += stopwatch.total_run_time
-        self.log(f"train reached breakpoint_step {self.breakpoint_step}")
-        return next_job
 
     def run(self):
         self.log(f"Worker.run")
@@ -175,7 +106,9 @@ class Worker(ctx.Process):
         else:
             raise RuntimeError("Invalid job")
         self.outbox.put("booted")
+        main_event_loop()
 
+    def main_event_loop(self):
         # Jupyter sends KeyboardInterrupt in error sometimes
         # when cells are interrupted, so we ignore them in our
         # main event loop:
@@ -197,43 +130,44 @@ class Worker(ctx.Process):
         self.log("terminated")
 
     def dispatch(self, instruction, *args, **kwargs):
-        self.log(f"dispatch({instruction, kwargs}")
-        if instruction == "start":
-            self.log("start")
-            self.breakpoint_step = kwargs["breakpoint_step"]
-            self.outbox.put("started")
-            job = self.train()
-            instruction = job["instruction"]
-            args = job["args"]
-            kwargs = job["kwargs"]
-            assert instruction != "start"
-            # ... and then case fall-through to handle
-            #     the job that train was interrupted by
-        if instruction == "terminate":
-            return "terminated"
-        if instruction == "update":
-            return self.update(*args, **kwargs)
-        if instruction == "autocomplete":
-            with Stopwatch() as stopwatch:
-                result = self.autocomplete(*args, **kwargs)
-            self.log(f"autocomplete finished in {stopwatch.total_run_time}s")
-            return result
-        if instruction == "save":
-            return self.save(*args, **kwargs)
-        if instruction == "load":
-            return self.load(*args, **kwargs)
-        if instruction == "pause":
-            self.log("pause")
-            return "paused"
+        self.log(f"dispatch({instruction, args, kwargs}")
+        with Stopwatch() as stopwatch:
+            try:
+                if instruction == "train":
+                    return self.train(*args, **kwargs)
+                elif instruction == "terminate":
+                    return self.terminate(*args, **kwargs)
+                elif instruction == "autocomplete":
+                    return self.autocomplete(*args, **kwargs)
+                elif instruction == "save":
+                    return self.save(*args, **kwargs)
+                elif instruction == "load":
+                    return self.load(*args, **kwargs)
+                elif instruction == "pause":
+                    return self.pause(*args, **kwargs)
+            except Exception as e:
+                return e
+        self.log(f"instruction {instruction} handled in {stopwatch.total_run_time}s")
 
-    def update(self, entity, *args, **kwargs):
-        self.log(f"update({args},{kwargs})")
-        if entity == "model":
-            return self.model.update(*args, **kwargs)
-        if entity == "optimizer":
-            return self.optimizer.update(*args, **kwargs)
-        if entity == "dataset":
-            return self.dataset.update(*args, **kwargs)
+    def train(self, *args, **kwargs):
+        self.log("train")
+        if "model" in kwargs:
+            self.model.update(*args, **kwargs)
+        if "optimizer" in kwargs:
+            self.optimizer.update(*args, **kwargs)
+        if "dataset" in kwargs:
+            self.dataset.update(*args, **kwargs)
+        self.breakpoint_step = kwargs["breakpoint_step"]
+        if self.thread != None:
+            raise AlreadyTrainingError()
+        self.thread = threading.Thread(target=self._train)
+        self.thread.start()
+        return f"> Train from step {self.step} to {self.breakpoint_step}."
+
+    def terminate(self):
+        self.stop_train_thread_event.set()
+        return "terminated"
+
 
     def autocomplete(self,
                      prompt=None,
@@ -302,3 +236,79 @@ class Worker(ctx.Process):
         self.metrics = checkpoint["metrics"]
         self.logs = checkpoint["logs"]
         return self.metrics
+
+    def pause(self):
+        return "paused"
+
+    def _train(self):
+        self.log("train")
+        next_job = {"instruction": None, "args": None, "kwargs": None}
+        with Stopwatch() as stopwatch:
+            while self.breakpoint_step is None or self.step < self.breakpoint_step:
+                if not self.parent.is_alive():
+                    raise RuntimeError("Parent process is not alive.")
+                try:
+                    batch_losses = self.optimizer.step(self.closure)
+                except StopTrainThread:
+                    self.log("StopTrainThread")
+                    self.info["time"] += stopwatch.time_elapsed
+                    return
+                self.step += 1
+                self.info["energy"] = 0 #self.model.profile()["energy"]
+                # TODO: don't neglect optimizer costs in energy estimates
+                self.info["ingest"] += self.dataset.batch_size * self.dataset.example_length
+                step_info = {'step': self.step,
+                             'time': self.info["time"] + stopwatch.time_elapsed,
+                             'energy': self.info["energy"],
+                             'ingest': self.info["ingest"],
+                             'mean_loss': np.mean(batch_losses),
+                             'batch_losses': batch_losses,
+                             'last_autocomplete': self.last_autocomplete}
+                self.metrics.append(step_info)
+                self.metrics_outbox.put(step_info)
+        self.info["time"] += stopwatch.total_run_time
+        self.log(f"train reached breakpoint_step {self.breakpoint_step}")
+
+    def closure(self):
+        self.minibatches = 1
+        self.minibatch_size = self.dataset.batch_size
+        while True:
+            try:
+                return self._closure()
+            except RuntimeError as e: # CUDA OOM
+                if "CUDA" in str(e): # false positives?
+                    torch.cuda.empty_cache()
+                    self.minibatches *= 2
+                    self.minibatch_size = self.dataset.batch_size // self.minibatches
+                    if self.minibatch_size == 0:
+                        raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
+                    f = memory_free()
+                    a = memory_allocated()
+                    self.log(f"Splitting batch of {self.dataset.batch_size} examples into "
+                             f"{self.minibatches} minibatches of size {self.minibatch_size} "
+                             f"due to memory constraints.\n",
+                             batch_size=self.dataset.batch_size,
+                             example_length=self.dataset.example_length,
+                             cuda_memory={"free": f"{f//2**20}MiB",
+                                          "allocated": f"{a//2**20}MiB",
+                                          "total": f"{(f+a)//2**20}MiB"})
+                else:
+                    raise e
+
+    def _closure(self):
+        if torch.is_grad_enabled():
+            self.optimizer.zero_grad()
+        Y = []
+        for _ in range(self.minibatches):
+            if self.stop_train_thread_event.is_set():
+                raise StopTrainThread()
+            X = self.dataset.batch(
+                    batch_size=self.minibatch_size,
+                    example_length=self.dataset.example_length)
+            batch_losses = self.model(X)
+            if torch.is_grad_enabled():
+                loss = torch.sum(batch_losses)/torch.numel(batch_losses)
+                loss.backward()
+            Y.append(batch_losses.detach())
+        Y = torch.cat(Y)
+        return Y.cpu().numpy()
