@@ -33,7 +33,7 @@ class Trainer:
         self.inbox = Queue()
         self.outbox = Queue()
         self.autocomplete_inbox = Queue()
-        # self.metrics_lock = Lock()
+        self.metrics_lock = Lock()
         self.metrics = []
         self.metrics_inbox = Queue()
         self.metrics_inbox_daemon_halt = threading.Event()
