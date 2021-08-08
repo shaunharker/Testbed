@@ -1,6 +1,22 @@
 import torch
 from torch.optim import Optimizer
-from .tracker import EMA
+
+
+class EMA:
+    def __init__(self, param, x=None):
+        self.param = param
+        self.x = x
+
+    def step(self, x):
+        if self.x is None:
+            self.x = x
+        else:
+            self.x.mul_(self.param).add_(x, alpha=1-self.param)
+        return self.x
+
+    def __call__(self):
+        return self.x
+
 
 class AdamW(Optimizer):
     r"""
@@ -41,24 +57,16 @@ class AdamW(Optimizer):
                  beta1=lambda step: 0.9,
                  beta2=lambda step: 0.999,
                  eps=lambda step: 1e-8,
-                 weight_decay=lambda step: 0.01):
-        if not 0.0 <= lr:
-            raise ValueError(f"Invalid lr value: {lr}")
-        if not 0.0 <= beta1 < 1.0:
-            raise ValueError(f"Invalid beta1 value: {beta1}")
-        if not 0.0 <= beta2 < 1.0:
-            raise ValueError(f"Invalid beta2 value: {beta2}")
-        if not 0.0 <= eps:
-            raise ValueError(f"Invalid eps value: {eps}")
-        if not 0.0 <= weight_decay:
-            raise ValueError(f"Invalid weight_decay value: {weight_decay}")
+                 weight_decay=lambda step: 0.01,
+                 initial_step=0):
         super().__init__(parameters, {})
         self.lr = lr
         self.beta1 = beta1
         self.beta2 = beta2
         self.eps = eps
         self.weight_decay = weight_decay
-        self.step = 0
+        self.initial_step = initial_step
+        self.n = initial_step
 
     def params(self):
         return [p for group in self.param_groups for p in group['params']
@@ -67,27 +75,27 @@ class AdamW(Optimizer):
     def _setup(self):
         for (idx, p) in enumerate(self.params()):
             zeros = lambda : torch.zeros_like(p, memory_format=torch.preserve_format)
-            self.state[idx]={'ema_grad': EMA(self.beta1(self.step), zeros()),
-                             'ema_sqr_grad': EMA(self.beta2(self.step), zeros())}
+            self.state[idx]={'ema_grad': EMA(self.beta1(self.n), zeros()),
+                             'ema_sqr_grad': EMA(self.beta2(self.n), zeros())}
 
     @torch.no_grad()
     def step(self, closure):
         with torch.enable_grad():
             result = closure()
-        if self.step == 0:
+        if self.n == self.initial_step:
             self._setup()
-        self.step += 1
+        self.n += 1
         for (idx, p) in enumerate(self.params()):
-            p.grad.data = torch.nan_to_num(p.grad.data, nan=0.0, pos_inf=0.0, neg_inf=0.0)
+            p.grad.data = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
             self.state[idx]['ema_grad'].step(p.grad.data)
             p.grad.data.square_()
             self.state[idx]['ema_sqr_grad'].step(p.grad.data)
-        bias_correction1 = 1 - self.beta1(self.step) ** self.step
-        bias_correction2 = 1 - self.beta2(self.step) ** self.step
+        bias_correction1 = 1 - self.beta1(self.n) ** self.n
+        bias_correction2 = 1 - self.beta2(self.n) ** self.n
         for (idx, p) in enumerate(self.params()):
             G = self.state[idx]['ema_grad']()/bias_correction1
             G2 = self.state[idx]['ema_sqr_grad']()/bias_correction2
-            torch.sqrt_(G2).add_(self.eps(self.step)) # G2 = torch.sqrt(G2) + self.state['eps']
-            G.div_(G2).add_(p.data,alpha=self.weight_decay(self.step)))
-            p.data.sub_(G,alpha=self.lr(self.step))
+            torch.sqrt_(G2).add_(self.eps(self.n))
+            G.div_(G2).add_(p.data,alpha=self.weight_decay(self.n))
+            p.data.sub_(G,alpha=self.lr(self.n))
         return result

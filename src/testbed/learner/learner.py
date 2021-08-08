@@ -8,26 +8,16 @@ class Learner:
             self.load(path)
         if config is not None:
             if "model" in config:
-                try:
-                    self.model = config["model"]["type"](**config["model"]["kwargs"]).to('cuda')
-                except Exception as e:
-                    self.model = config["model"]
+                self.model = config["model"]
             if "optimizer" in config:
-                try:
-                    self.optimizer = config["optimizer"]["type"](parameters=self.model.parameters(), **config["optimizer"]["kwargs"])
-                except Exception as e:
-                    self.optimizer = config["optimizer"]
+                self.optimizer = config["optimizer"]
             if "dataset" in config:
-                try:
-                    self.dataset = config["dataset"]["type"](**config["dataset"]["kwargs"])
-                except Exception as e:
-                    self.dataset = config["dataset"]
+                self.dataset = config["dataset"]
         self.call_minibatches_cache = {} # cache to remember how to split up memory constrained step calls, keyed by (batch_size, example_length)
 
     def save(self, path):
         checkpoint = {"model": self.model, "optimizer": self.optimizer, "dataset": self.dataset}
         torch.save(checkpoint, path)
-        return "saved"
 
     def load(self, path):
         checkpoint = torch.load(path)
@@ -36,7 +26,7 @@ class Learner:
         self.dataset = checkpoint["dataset"]
 
     def step(self, batch_size, example_length):
-        closure = lambda: grad_computation(batch_size, example_length)
+        closure = lambda: self.grad_computation(batch_size, example_length)
         return self.optimizer.step(closure)
 
     def grad_computation(self, batch_size, example_length):

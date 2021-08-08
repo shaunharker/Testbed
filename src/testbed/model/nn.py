@@ -1,6 +1,6 @@
 import math
 import torch
-from torch.nn import Module, Sigmoid, ReLU, GELU
+from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU
 from torch.cuda.amp import autocast
 import dill
 from types import GeneratorType
@@ -38,21 +38,21 @@ class Sequential(Module):
 
 
 class Lambda(Module):
-    def __init__(self, f):
+    def __init__(self, F):
         super().__init__()
-        self.f = f
+        self.F = F
 
     def forward(self, x):
-        return self.f(x)
+        return self.F(x)
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        state['f'] = dill.dumps(self.f)
+        state['F'] = dill.dumps(self.F)
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self.f = dill.loads(self.f)
+        self.F = dill.loads(self.F)
 
 
 class Affine(Module):
@@ -71,47 +71,48 @@ class Nonlinearity(Module):
     def __init__(self, nonlinearity):
         super().__init__()
         self.nonlinearity = nonlinearity
-        self.f = {"sigmoid": Sigmoid(), "ReLU": ReLU(), "GELU": GELU()}[nonlinearity]
+        self.F = {"sigmoid": Sigmoid(), "ReLU": ReLU(), "GELU": GELU()}[nonlinearity]
 
     def forward(self, x):
-        return self.f(x)
+        return self.F(x)
 
 
 class CrossEntropyLoss(Module):
     def __init__(self, n_classes):
         super().__init__()
         self.n_classes = n_classes
-        self.criterion = torch.nn.CrossEntropyLoss(reduction='none')
+        self.F = torch.nn.CrossEntropyLoss(reduction='none')
 
-    def forward(self, x):
-        self.criterion(x.reshape(-1,self.n_classes), y.reshape(-1)).view(x.shape[:-1])/math.log(self.n_classes)
+    def forward(self, x, y):
+        return self.F(x.reshape(-1,self.n_classes), y.reshape(-1)).view(x.shape[:-1])/math.log(self.n_classes)
 
 
 class Softmax(Module):
     def __init__(self):
         super().__init__()
-        self.softmax = torch.nn.Softmax(dim=-1)
+        self.F = torch.nn.Softmax(dim=-1)
 
     def forward(self, x):
-        return self.softmax(x)
+        return self.F(x)
 
 
 class MLP(Module):
-    def __init__(self, d_in, d_hidden, nonlinearity='sigmoid', d_out):
+    def __init__(self, d_in, d_hidden, nonlinearity, d_out):
         super().__init__()
         self.d_in = d_in
         self.d_hidden = d_hidden
         self.d_out = d_out
         self.nonlinearity = nonlinearity
-        self.module = Sequential(Affine(d_in=d_in, d_out=d_hidden), Nonlinearity(nonlinearity), Affine(d_in=d_hidden, d_out=d_out))
+        self.F = Sequential(Affine(d_in=d_in, d_out=d_hidden), Nonlinearity(nonlinearity), Affine(d_in=d_hidden, d_out=d_out))
 
     def forward(self, x):
-        return self.module(x)
+        return self.F(x)
 
 
 class LanguageModel(Module):
-    def __init__(self, module, n_vocab_out):
-        self.module = module
+    def __init__(self, F, n_vocab_out):
+        super().__init__()
+        self.F = F
         self.split_example = SplitExample()
         self.crossentropyloss = CrossEntropyLoss(n_vocab_out)
         self.softmax = Softmax()
@@ -119,13 +120,13 @@ class LanguageModel(Module):
     def forward(self, xy):
         if torch.is_grad_enabled():
             (x, y) = self.split_example(xy)
-            return self.crossentropyloss(self.module(x), y)
+            return self.crossentropyloss(self.F(x), y)
         else:
-            return self.softmax(self.module(x))
+            return self.softmax(self.F(x))
 
 
 class MLPLM(Module):
-    def __init__(self, n_ctx, n_vocab_in, d_model, d_hidden, nonlinearity='sigmoid', n_vocab_out):
+    def __init__(self, n_ctx, n_vocab_in, d_model, d_hidden, nonlinearity, n_vocab_out):
         super().__init__()
         self.n_ctx = n_ctx
         self.n_vocab_in = n_vocab_in
@@ -133,7 +134,7 @@ class MLPLM(Module):
         self.d_hidden = d_hidden
         self.nonlinearity = nonlinearity
         self.n_vocab_out = n_vocab_out
-        self.module = LanguageModel(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, d_out=n_vocab_out)), n_vocab_out=n_vocab_out)
+        self.F = LanguageModel(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, nonlinearity=nonlinearity, d_out=n_vocab_out)), n_vocab_out=n_vocab_out)
 
     def forward(self, x):
-        return self.module(x)
+        return self.F(x)

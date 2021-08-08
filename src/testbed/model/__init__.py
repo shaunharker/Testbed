@@ -1,2 +1,2 @@
 from .nn import MLPLM
-from .transformer import Transformer
+from .transformer import TransformerLM

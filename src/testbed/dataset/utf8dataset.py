@@ -50,7 +50,7 @@ class UTF8Dataset:
             for _ in range(batch_size):
                 jitter = randrange(1024-example_length)
                 offset = 1024*self.snippet + jitter
-                if idx + example_length >= self.n_bytes:
+                if offset + example_length >= self.n_bytes:
                     self.snippet = 0
                     offset = jitter
                 yield torch.tensor(np.fromfile(self.path, dtype=np.uint8, count=example_length,

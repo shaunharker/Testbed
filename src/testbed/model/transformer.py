@@ -1,7 +1,7 @@
 import math
 import torch
-from torch.nn import Module, Dropout, Linear
-from .nn import Sequential, CrossEntropyLoss, Softmax, Embedding, MLP, LanguageModel
+from torch.nn import Module, Linear, Dropout, LayerNorm
+from .nn import Sequential, Embedding, MLP, LanguageModel
 
 
 class ResidualDropoutLayerNorm(Module):
@@ -69,7 +69,7 @@ class TransformerLayer(Module):
         self.p_dropout_mlp = p_dropout_mlp
 
         self.attn = ResidualDropoutLayerNorm(Attn(d_model, d_k, d_v, n_heads, p_dropout_attn_mat), d_model, p_dropout_attn_out)
-        self.mlp = ResidualDropoutLayerNorm(MLP(d_model, d_hidden, 'gelu', d_model), d_model, p_dropout_mlp)
+        self.mlp = ResidualDropoutLayerNorm(MLP(d_model, d_hidden, 'GELU', d_model), d_model, p_dropout_mlp)
 
     def forward(self, x):
         return self.mlp(self.attn(x))
@@ -87,7 +87,7 @@ class PositionalEncoding(Module):
         return x + self.weight[-n_ctx:]
 
 
-class Transformer(Module):
+class TransformerLM(Module):
     def __init__(self, n_vocab_in, n_vocab_out, max_ctx, d_model, d_k, d_v, n_heads, d_hidden, n_layers, p_dropout_embedding, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp):
         super().__init__()
         self.n_vocab_in = n_vocab_in
@@ -103,7 +103,7 @@ class Transformer(Module):
         self.p_dropout_attn_mat = p_dropout_attn_mat
         self.p_dropout_attn_out = p_dropout_attn_out
         self.p_dropout_mlp = p_dropout_mlp
-        self.module = LanguageModel(Sequential(Embedding(n_vocab_in, d_model),Dropout(p_dropout_embedding),PositionalEncoding(max_ctx, d_model),Sequential(TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp) for _ in range(n_layers)), Linear(d_model, n_vocab_out)), n_vocab_out=n_vocab_out)
+        self.F = LanguageModel(Sequential(Embedding(n_vocab_in, d_model), Dropout(p_dropout_embedding), PositionalEncoding(max_ctx, d_model), Sequential(TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp) for _ in range(n_layers)), Linear(d_model, n_vocab_out)), n_vocab_out=n_vocab_out)
 
     def forward(self, x):
-        return self.module(x)
+        return self.F(x)
