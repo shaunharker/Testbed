@@ -1,10 +1,22 @@
 import math
 import torch
-from torch.nn import Module, Dropout, Embedding, Linear, CrossEntropyLoss, Softmax
-from torch.cuda.amp import autocast
-from .sequential import Sequential
-from .mlp import MLP
-from .residualdropoutlayernorm import ResidualDropoutLayerNorm
+from torch.nn import Module, Dropout, Linear
+from .nn import Sequential, CrossEntropyLoss, Softmax, Embedding
+
+
+class ResidualDropoutLayerNorm(Module):
+    def __init__(self, layer, d_model, p_dropout):
+        super().__init__()
+        self.d_model = d_model
+        self.p_dropout = p_dropout
+
+        self.layer = layer
+        self.dropout = Dropout(p_dropout)
+        self.layernorm = LayerNorm(d_model)
+
+    def forward(self, x):
+        assert x.shape[-1] == self.d_model, f"{x.shape[-1]} != {self.d_model}"
+        return self.layernorm(x+self.dropout(self.layer(x)))
 
 
 class Mask(Module):
@@ -110,7 +122,7 @@ class Transformer(Module):
         self.p_dropout_attn_out = p_dropout_attn_out
         self.p_dropout_ff = p_dropout_ff
 
-        self.encoder = (
+        self.module = (
             Sequential(
                 Embedding(n_vocab_in, d_model),
                 Dropout(p_dropout_embedding),
@@ -118,13 +130,19 @@ class Transformer(Module):
                 Sequential(
                     TransformerLayer(d_model, d_k, d_v, n_heads, d_ff,
                                      p_dropout_attn_mat, p_dropout_attn_out, p_dropout_ff)
-                    for _ in range(n_layers))))
-        self.decoder = Linear(d_model, n_vocab_out)
-        self.softmax = torch.nn.Softmax(dim=-1)
-        self.criterion = CrossEntropyLoss(reduction='none')
+                    for _ in range(n_layers)))
+                Linear(d_model, n_vocan_out))
+        self.softmax = Softmax()
+        self.criterion = CrossEntropyLoss()
 
-    def forward(self, X, probs=False):
-        with autocast(enabled=self.use_amp):
+    def forward(self, X):
+        try:
+            (x, y) = split_example(xy)
+            return self.crossentropyloss(self.module(x), y)
+        except:
+            return self.softmax(self.module(x))
+
+
             if not probs:
                 Y = X[...,1:].contiguous()
                 X = X[...,:-1].contiguous()
