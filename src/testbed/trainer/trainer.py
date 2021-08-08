@@ -33,7 +33,7 @@ class Trainer:
         self.inbox = Queue()
         self.outbox = Queue()
         self.autocomplete_inbox = Queue()
-        self.metrics_lock = Lock()
+        # self.metrics_lock = Lock()
         self.metrics = []
         self.metrics_inbox = Queue()
         self.metrics_inbox_daemon_halt = threading.Event()
@@ -89,8 +89,6 @@ class Trainer:
     def load(self, path="checkpoint.pt"):
         with self.metrics_lock:
             self.metrics = self.call("load", path=path)
-
-
 
     def autocomplete(self, prompt=None, n_generate=256, max_ctx=512):
         def sequence():

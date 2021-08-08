@@ -12,7 +12,7 @@ from threading import Thread, Event
 class AlreadyTrainingError(Exception):
     pass
 
-class StopTrainThread(Exception):
+class StopTrainingThreadInterrupt(Exception):
     pass
 
 class JobInterrupt(Exception):
@@ -63,6 +63,11 @@ class Worker(ctx.Process):
 
     def run(self):
         self.log(f"Worker.run")
+        self.boot_up()
+        self.main_event_loop()
+
+    def boot_up(self):
+        self.log(f"Worker.boot_up")
         self.parent = torch.multiprocessing.parent_process()
         self.outbox.put("ready")
         job = self.inbox.get()
@@ -106,7 +111,6 @@ class Worker(ctx.Process):
         else:
             raise RuntimeError("Invalid job")
         self.outbox.put("booted")
-        main_event_loop()
 
     def main_event_loop(self):
         # Jupyter sends KeyboardInterrupt in error sometimes
@@ -167,7 +171,6 @@ class Worker(ctx.Process):
     def terminate(self):
         self.stop_train_thread_event.set()
         return "terminated"
-
 
     def autocomplete(self,
                      prompt=None,
@@ -249,8 +252,8 @@ class Worker(ctx.Process):
                     raise RuntimeError("Parent process is not alive.")
                 try:
                     batch_losses = self.optimizer.step(self.closure)
-                except StopTrainThread:
-                    self.log("StopTrainThread")
+                except StopTrainingThreadInterrupt:
+                    self.log("StopTrainingThreadInterrupt")
                     self.info["time"] += stopwatch.time_elapsed
                     return
                 self.step += 1
