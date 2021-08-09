@@ -12,3 +12,5 @@ from testbed.model import MLPLM
 from testbed.model import TransformerLM
 from testbed.optimizer import AdamW
 from testbed.learner import Learner
+from testbed.util import MagicList
+from testbed.gui import StatsTicker
