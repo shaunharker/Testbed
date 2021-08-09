@@ -20,13 +20,16 @@ class ResidualDropoutLayerNorm(Module):
 
 
 class Mask(Module):
-    def __init__(self, mode="half_causal"):
+    def __init__(self, mode="causal"):
         super().__init__()
         self.mode = mode
 
     def forward(self, x):
         n, device = x.shape[-1], x.device
-        return x+(1-1/torch.cat([torch.cat([torch.ones((n//2,n//2),device=device), torch.zeros((n//2,n//2),device=device)], dim=1), torch.tril(torch.ones((n,n),device=device))[n//2:,:]], dim=0))
+        if self.mode == "causal":
+            return x+(1-1/torch.tril(torch.ones((n,n),device=device)))
+        elif self.mode == "half_causal":
+            return x+(1-1/torch.cat([torch.cat([torch.ones((n//2,n//2),device=device), torch.zeros((n//2,n//2),device=device)], dim=1), torch.tril(torch.ones((n,n),device=device))[n//2:,:]], dim=0))
 
 
 class Attn(Module):
@@ -41,7 +44,7 @@ class Attn(Module):
         self.query_proj = Linear(d_model, d_k*n_heads)
         self.key_proj = Linear(d_model, d_k*n_heads)
         self.value_proj = Linear(d_model, d_v*n_heads)
-        self.mask = Mask()
+        self.mask = Mask(mode="causal")
         self.dropout = Dropout(p_dropout)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.linear = Linear(d_v*n_heads, d_model, bias=False)
@@ -76,23 +79,24 @@ class TransformerLayer(Module):
 
 
 class PositionalEncoding(Module):
-    def __init__(self, max_ctx, d_model):
+    def __init__(self, n_ctx, d_model):
         super().__init__()
-        self.max_ctx = max_ctx
+        self.n_ctx = n_ctx
         self.d_model = d_model
-        self.weight = torch.nn.Parameter(0.02*torch.randn(max_ctx, d_model))
+        self.weight = torch.nn.Parameter(0.02*torch.randn(n_ctx, d_model))
 
     def forward(self, x):
         n_ctx = x.shape[-2]
+        assert n_ctx <= self.n_ctx
         return x + self.weight[-n_ctx:]
 
 
 class TransformerLM(Module):
-    def __init__(self, n_vocab_in, n_vocab_out, max_ctx, d_model, d_k, d_v, n_heads, d_hidden, n_layers, p_dropout_embedding, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp):
+    def __init__(self, n_vocab_in, n_vocab_out, n_ctx, d_model, d_k, d_v, n_heads, d_hidden, n_layers, p_dropout_embedding, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp):
         super().__init__()
         self.n_vocab_in = n_vocab_in
         self.n_vocab_out = n_vocab_out
-        self.max_ctx = max_ctx
+        self.n_ctx = n_ctx
         self.d_model = d_model
         self.d_k = d_k
         self.d_v = d_v
@@ -103,7 +107,7 @@ class TransformerLM(Module):
         self.p_dropout_attn_mat = p_dropout_attn_mat
         self.p_dropout_attn_out = p_dropout_attn_out
         self.p_dropout_mlp = p_dropout_mlp
-        self.F = LanguageModel(Sequential(Embedding(n_vocab_in, d_model), Dropout(p_dropout_embedding), PositionalEncoding(max_ctx, d_model), Sequential(TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp) for _ in range(n_layers)), Linear(d_model, n_vocab_out)), n_vocab_out=n_vocab_out)
+        self.F = LanguageModel(Sequential(Embedding(n_vocab_in, d_model), Dropout(p_dropout_embedding), PositionalEncoding(n_ctx, d_model), Sequential(TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp) for _ in range(n_layers)), Linear(d_model, n_vocab_out)), n_vocab_out=n_vocab_out, mode="shift")
 
     def forward(self, x):
         return self.F(x)

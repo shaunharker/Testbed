@@ -58,12 +58,7 @@ class Learner:
                     a = memory_allocated()
                     print(f"Splitting batch of {batch_size} examples into "
                              f"{minibatches} minibatches of size {minibatch_size} "
-                             f"due to memory constraints.\n",
-                             batch_size=batch_size,
-                             example_length=example_length,
-                             cuda_memory={"free": f"{f//2**20}MiB",
-                                          "allocated": f"{a//2**20}MiB",
-                                          "total": f"{(f+a)//2**20}MiB"})
+                             f"due to memory constraints.\n")
                 else:
                     raise e
 

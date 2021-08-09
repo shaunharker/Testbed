@@ -7,11 +7,16 @@ from types import GeneratorType
 
 
 class SplitExample(Module):
-    def __init__(self):
+    def __init__(self, mode="last"):
         super().__init__()
+        self.mode = mode
 
     def forward(self, xy):
-        return (xy[...,:-1].contiguous(), xy[...,-1].contiguous())
+        if self.mode == "last":
+            return (xy[...,:-1].contiguous(), xy[...,-1].contiguous())
+        elif self.mode == "shift":
+            n = xy.shape[-1]
+            return (xy[...,:-1].contiguous(), xy[...,1:].contiguous())
 
 
 class Embedding(Module):
@@ -110,17 +115,18 @@ class MLP(Module):
 
 
 class LanguageModel(Module):
-    def __init__(self, F, n_vocab_out):
+    def __init__(self, F, n_vocab_out, mode):
         super().__init__()
         self.F = F
-        self.split_example = SplitExample()
+        self.split_example = SplitExample(mode)
         self.crossentropyloss = CrossEntropyLoss(n_vocab_out)
         self.softmax = Softmax()
 
     def forward(self, xy):
         if torch.is_grad_enabled():
             (x, y) = self.split_example(xy)
-            return self.crossentropyloss(self.F(x), y)
+            x = self.F(x)
+            return self.crossentropyloss(x, y)/x.shape[-2]
         else:
             return self.softmax(self.F(xy))
 
@@ -134,7 +140,7 @@ class MLPLM(Module):
         self.d_hidden = d_hidden
         self.nonlinearity = nonlinearity
         self.n_vocab_out = n_vocab_out
-        self.F = LanguageModel(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, nonlinearity=nonlinearity, d_out=n_vocab_out)), n_vocab_out=n_vocab_out)
+        self.F = LanguageModel(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, nonlinearity=nonlinearity, d_out=n_vocab_out), Lambda(lambda x: x.view(-1, 1, n_vocab_out))), n_vocab_out=n_vocab_out, mode="last")
 
     def forward(self, x):
         return self.F(x)
