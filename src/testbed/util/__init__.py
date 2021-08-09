@@ -3,6 +3,7 @@ from math import log
 from .delaykeyboardinterrupt import DelayKeyboardInterrupt
 from .ignorekeyboardinterrupt import IgnoreKeyboardInterrupt
 from .stopwatch import Stopwatch
+from .magiclist import MagicList
 from pathlib import Path
 from functools import lru_cache
 from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlInit

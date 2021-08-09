@@ -7,9 +7,9 @@ import torch
 import types
 import time
 
-class SeqByteDataset:
+class UTF8Dataset:
     """
-    class SeqByteDataset
+    class UTF8Dataset
     --------------------
     ARGS:
         path:
@@ -17,27 +17,14 @@ class SeqByteDataset:
             DESC: the location of the dataset text file
                   Currently defaults to gutenberg.utf8,
                   which is 14GB of Gutenberg text reencoded in utf8
-        batch_size: int
-        example_length: int
     """
     def __init__(self,
-                 path=None,
-                 batch_size=None,
-                 example_length=None):
-        assert batch_size is not None, "batch_size: int  required"
-        assert example_length is not None, "example_length: int required"
-        self.update(path=path, batch_size=batch_size, example_length=example_length)
-
-    def update(self, path=None, batch_size=None, example_length=None):
+                 path=None):
         if path is None:
-            path = f"/home/{os.environ.get('USER')}/data/gutenberg.utf8"
+            path = f"/home/{os.environ.get('USER')}/data/gutenberg.1024.utf8"
         self.path = path
-        if batch_size is not None:
-            self.batch_size = batch_size
-        if example_length is not None:
-            self.example_length = example_length
         self.n_bytes = Path(path).stat().st_size
-        self.offset = 0
+        self.snippet = 0
 
     def batch(self, batch_size, example_length):
         """
@@ -61,17 +48,20 @@ class SeqByteDataset:
         """
         def examples():
             for _ in range(batch_size):
-                if self.offset + example_length >= self.n_bytes: self.offset = 0
+                jitter = randrange(1024-example_length)
+                offset = 1024*self.snippet + jitter
+                if offset + example_length >= self.n_bytes:
+                    self.snippet = 0
+                    offset = jitter
                 yield torch.tensor(np.fromfile(self.path, dtype=np.uint8, count=example_length,
-                    offset=self.offset).reshape(1,example_length), dtype=torch.long, device='cuda')
-                self.offset += example_length // 2
+                    offset=offset).reshape(1,example_length), dtype=torch.long, device='cuda')
+                self.snippet += 1
         return torch.cat([x for x in examples()])
-
 
     @staticmethod
     def encode(char_sequence):
         """
-        static method ByteDataset.encode(char_sequence)
+        static method UTF8Dataset.encode(char_sequence)
         -----------------------------------------------
         ARGS:
             char_sequence:
@@ -103,7 +93,7 @@ class SeqByteDataset:
     @staticmethod
     def decode(byte_sequence):
         """
-        static method ByteDataset.decode(byte_sequence)
+        static method UTF8Dataset.decode(byte_sequence)
         -----------------------------------------------
         DESC:
             a fault-tolerant utf8 decoder
