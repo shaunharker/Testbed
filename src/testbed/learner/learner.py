@@ -67,28 +67,24 @@ class Learner:
                 else:
                     raise e
 
-    def autocomplete(self, prompt=None, n_generate=128, min_ctx=32, max_ctx=32, callback=None):
+    @torch.no_grad()
+    def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, output=None):
         Categorical = torch.distributions.Categorical
         decode = self.dataset.decode
         encode = self.dataset.encode
         batch = self.dataset.batch
-        if max_ctx is None:
-            max_ctx = model.max_ctx
+        if n_ctx is None:
+            n_ctx = self.model.n_ctx
         if prompt is None:
-            prompt = decode(batch(1, max_ctx).tolist()[0])
-        else:
-            if prompt == "":
-                prompt = " "
-            prompt = decode(encode(prompt))
+            prompt = decode(batch(1, 2*n_ctx).tolist()[0]) # kludge
         x = encode(prompt)
-        x = x[-max_ctx:]
-        assert len(x) <= max_ctx, f"x={x} max_ctx={max_ctx}"
+        x = x[-n_ctx:]
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
-                y = Categorical(self.model.probs(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
-                x = (x + [y])[-max_ctx:]
-                if callback is not None:
-                    callback(y)
+                y = Categorical(self.model(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
+                x = (x + [y])[-n_ctx:]
+                if output is not None:
+                    output.append(y)
                 yield y
         return decode(list(sampler(x)))

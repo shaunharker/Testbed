@@ -5,7 +5,7 @@ import time, math
 import asyncio
 
 class StatsTicker:
-    def __init__(self, metrics, x='time', y='mean_loss'):
+    def __init__(self, metrics, x='step', y='mean_loss'):
         self.metrics = metrics
         self.x = x
         self.y = y
@@ -33,7 +33,8 @@ class StatsTicker:
         while True:
             try:
                 await asyncio.sleep(1)
-                data = {x: [item[x] for item in metrics[tick:]], y: [item[y] for item in metrics[tick:]]}
+                newdata = metrics[tick:]
+                data = {x: [tick + idx for idx in range(len(newdata))], y: [y for y in metrics[tick:]]}
                 if len(data) > 0:
                     bokeh["data"].data_source.stream({'x': data[x], 'y': data[y]})
                     tick = len(metrics)

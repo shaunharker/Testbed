@@ -122,7 +122,7 @@ class LanguageModel(Module):
             (x, y) = self.split_example(xy)
             return self.crossentropyloss(self.F(x), y)
         else:
-            return self.softmax(self.F(x))
+            return self.softmax(self.F(xy))
 
 
 class MLPLM(Module):
