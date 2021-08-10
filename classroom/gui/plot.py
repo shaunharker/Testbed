@@ -65,7 +65,7 @@ class Plot:
         tick = defaultdict(lambda: 0)
         while True:
             try:
-                await asyncio.sleep(.1)
+                await asyncio.sleep(1.0)
                 try:
                     for name in plots:
                         t = tick[name]

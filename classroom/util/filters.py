@@ -73,6 +73,28 @@ class TwoWindowFilter:
             t = (i-j)/j
             return t*mu1 + (1-t)*mu2
 
+class DiffFilter:
+    def __init__(self):
+        self.x = None
+
+    def __call__(self, x):
+        y = self.x
+        self.x = x
+        if y is None:
+            return 0
+        else:
+            self.x = x
+            return x - y
+
+class CsumFilter:
+    def __init__(self):
+        self.x = 0
+
+    def __call__(self, x):
+        self.x += x
+        return self.x
+
+
 class KalmanFilter1D:
     def __init__(self, Q=1e-4, R=1e-2, mean=0.0, variance=1.0):
         self.Q = Q

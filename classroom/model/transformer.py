@@ -20,13 +20,15 @@ class ResidualDropoutLayerNorm(Module):
 
 
 class Mask(Module):
-    def __init__(self, mode="causal"):
+    def __init__(self, mode="none"):
         super().__init__()
         self.mode = mode
 
     def forward(self, x):
         n, device = x.shape[-1], x.device
-        if self.mode == "causal":
+        if self.mode == "none":
+            return x
+        elif self.mode == "causal":
             return x+(1-1/torch.tril(torch.ones((n,n),device=device)))
         elif self.mode == "half_causal":
             return x+(1-1/torch.cat([torch.cat([torch.ones((n//2,n//2),device=device), torch.zeros((n//2,n//2),device=device)], dim=1), torch.tril(torch.ones((n,n),device=device))[n//2:,:]], dim=0))
@@ -44,7 +46,7 @@ class Attn(Module):
         self.query_proj = Linear(d_model, d_k*n_heads)
         self.key_proj = Linear(d_model, d_k*n_heads)
         self.value_proj = Linear(d_model, d_v*n_heads)
-        self.mask = Mask(mode="causal")
+        self.mask = Mask(mode="half_causal")
         self.dropout = Dropout(p_dropout)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.linear = Linear(d_v*n_heads, d_model, bias=False)
