@@ -1,19 +1,19 @@
-# testbed/__init__.py
+# classroom/__init__.py
 # Shaun Harker
 # 2021-06-20
-import testbed.dataset
-import testbed.gui
-import testbed.model
-import testbed.learner
-import testbed.util
+import classroom.dataset
+import classroom.gui
+import classroom.model
+import classroom.learner
+import classroom.util
 
-from testbed.dataset import UTF8Dataset
-from testbed.model import MLPLM
-from testbed.model import TransformerLM
-from testbed.optimizer import AdamW
-from testbed.learner import Learner
-from testbed.util import Filter
-from testbed.util import KalmanFilter1D
-from testbed.util import MedianFilter
-from testbed.util import TwoWindowFilter
-from testbed.gui import Plot
+from classroom.dataset import UTF8Dataset
+from classroom.model import MLPLM
+from classroom.model import TransformerLM
+from classroom.optimizer import AdamW
+from classroom.learner import Learner
+from classroom.util import Filter
+from classroom.util import KalmanFilter1D
+from classroom.util import MedianFilter
+from classroom.util import TwoWindowFilter
+from classroom.gui import Plot

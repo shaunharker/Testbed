@@ -9,14 +9,13 @@
 from setuptools import setup
 
 setup(
-    name='testbed',
-    version='0.0.0',
+    name='classroom',
+    version='0.0.1',
     author='Shaun Harker',
     author_email='sharker81@gmail.com',
-    description='Machine Learning Testbed using PyTorch',
+    description='Machine Learning using PyTorch',
     long_description='',
-    package_dir = {'': 'src'},
-    packages=['testbed'],
+    packages=['classroom'],
     zip_safe=True,
     url = '',
     download_url = '',
