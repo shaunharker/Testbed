@@ -4,6 +4,8 @@ from time import sleep
 import numpy as np
 
 # Shaun Harker, 2021-08-09
+# I may have outsmarted myself here,
+# not sure what situation I need this for.
 
 class FloatProtocol(asyncio.Protocol):
     def __init__(self, data):
@@ -25,7 +27,7 @@ class FloatProtocol(asyncio.Protocol):
         pass
 
 
-class MagicList:
+class LiveList:
     def __init__(self):
         self.data = []
         sock, self.sock = socket.socketpair()

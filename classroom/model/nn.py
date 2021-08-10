@@ -1,6 +1,8 @@
 import math
 import torch
 from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU
+from torch.nn import Embedding as TorchEmbedding
+from torch.nn import Linear as TorchAffine
 from torch.cuda.amp import autocast
 import dill
 from types import GeneratorType
@@ -19,15 +21,11 @@ class SplitExample(Module):
             return (xy[...,:-1].contiguous(), xy[...,1:].contiguous())
 
 
-class Embedding(Module):
+class Embedding(TorchEmbedding):
     def __init__(self, n_classes, d_model):
-        super().__init__()
+        super().__init__(n_classes, d_model)
         self.n_classes = n_classes
         self.d_model = d_model
-        self.weight = torch.nn.Parameter(0.01*torch.randn(n_classes, d_model))
-
-    def forward(self, x):
-        return torch.index_select(self.weight, 0, x.view(-1)).view(x.shape + (self.d_model,))
 
 
 class Sequential(Module):
@@ -60,16 +58,11 @@ class Lambda(Module):
         self.F = dill.loads(self.F)
 
 
-class Affine(Module):
+class Affine(TorchAffine):
     def __init__(self, d_in, d_out):
-        super().__init__()
+        super().__init__(d_in, d_out)
         self.d_in = d_in
         self.d_out = d_out
-        self.weight = torch.nn.Parameter(0.02*torch.randn(d_in, d_out))
-        self.bias = torch.nn.Parameter(torch.zeros(d_out))
-
-    def forward(self, x):
-        return x @ self.weight + self.bias
 
 
 class Nonlinearity(Module):

@@ -12,5 +12,8 @@ from testbed.model import MLPLM
 from testbed.model import TransformerLM
 from testbed.optimizer import AdamW
 from testbed.learner import Learner
-from testbed.util import MagicList
-from testbed.gui import StatsTicker
+from testbed.util import Filter
+from testbed.util import KalmanFilter1D
+from testbed.util import MedianFilter
+from testbed.util import TwoWindowFilter
+from testbed.gui import Plot
