@@ -46,7 +46,7 @@ class Attn(Module):
         self.query_proj = Linear(d_model, d_k*n_heads)
         self.key_proj = Linear(d_model, d_k*n_heads)
         self.value_proj = Linear(d_model, d_v*n_heads)
-        self.mask = Mask(mode="half_causal")
+        self.mask = Mask(mode="none")
         self.dropout = Dropout(p_dropout)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.linear = Linear(d_v*n_heads, d_model, bias=False)

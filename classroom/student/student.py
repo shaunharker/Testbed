@@ -2,7 +2,7 @@ import torch
 from ..util import memory_allocated, memory_free
 import numpy as np
 
-class Learner:
+class Student:
     def __init__(self, path=None, config=None):
         if path is not None:
             self.load(path)
