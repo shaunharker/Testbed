@@ -12,6 +12,7 @@ from classroom.model import MLPLM
 from classroom.model import TransformerLM
 from classroom.optimizer import AdamW
 from classroom.student import Student
+from classroom.classroom import Classroom
 from classroom.util import Filter
 from classroom.util import KalmanFilter1D
 from classroom.util import MedianFilter

@@ -1,22 +1,53 @@
 import torch
 from ..util import memory_allocated, memory_free
 import numpy as np
+import copy
+from random import randrange
 
 class Student:
-    def __init__(self, path=None, config=None):
+    def __init__(self, path=None, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None):
         if path is not None:
             self.load(path)
-        if config is not None:
-            if "model" in config:
-                self.model = config["model"]
-            if "optimizer" in config:
-                self.optimizer = config["optimizer"]
-            if "dataset" in config:
-                self.dataset = config["dataset"]
+        if model is not None:
+            self.model = model
+        if optimizer is not None:
+            self.optimizer = optimizer
+        if dataset is not None:
+            self.dataset = dataset
+        if batch_size is not None:
+            self.batch_size = batch_size
+        else:
+            self.batch_size = 1
+        if example_length is not None:
+            self.example_length = example_length
+        else:
+            self.example_length = self.model.n_ctx + 1
         self.call_minibatches_cache = {} # cache to remember how to split up memory constrained step calls, keyed by (batch_size, example_length)
 
+    def clone(self):
+        return copy.deepcopy(self)
+
+    def mutate(self):
+        c = random.choice(["batch_size", "lr"])
+        if c == "batch_size":
+            if self.batch_size == 1:
+                self.batch_size = 2
+            else:
+                c = random.choice(["half","double"])
+                if c == "half":
+                    self.batch_size = self.batch_size // 2
+                elif c == "double":
+                    self.batch_size = self.batch_size * 2
+        elif c == "lr":
+            c = random.choice(["half","double"])
+            if c == "half":
+                self.optimizer.lr = self.optimizer.lr // 2
+            elif c == "double":
+                self.optimizer.lr = self.optimizer.lr * 2
+
     def save(self, path):
-        checkpoint = {"model": self.model, "optimizer": self.optimizer, "dataset": self.dataset}
+        checkpoint = {"model": self.model, "optimizer": self.optimizer, "dataset": self.dataset,
+            "batch_size": self.batch_size, "example_length": example_length}
         torch.save(checkpoint, path)
 
     def load(self, path):
@@ -24,12 +55,16 @@ class Student:
         self.model = checkpoint["model"]
         self.optimizer = checkpoint["optimizer"]
         self.dataset = checkpoint["dataset"]
+        self.batch_size = checkpoint["batch_size"]
+        self.example_length = checkpoint["example_length"]
 
-    def step(self, batch_size, example_length):
-        closure = lambda: self.grad_computation(batch_size, example_length)
-        return self.optimizer.step(closure)
+    def study(self):
+        closure = lambda: self.grad_computation()
+        return np.sum(self.optimizer.step(closure))/self.batch_size
 
-    def grad_computation(self, batch_size, example_length):
+    def grad_computation(self):
+        batch_size = self.batch_size
+        example_length = self.example_length
         minibatches = self.call_minibatches_cache.get((batch_size, example_length), 1)
         minibatch_size = batch_size // minibatches
         while True:
@@ -46,8 +81,8 @@ class Student:
                     Y.append(batch_losses.detach())
                 Y = torch.cat(Y)
                 return Y.cpu().numpy()
-            except RuntimeError as e: # CUDA OOM
-                if "CUDA" in str(e): # false positives?
+            except RuntimeError as e:
+                if "CUDA" in str(e):
                     torch.cuda.empty_cache()
                     minibatches *= 2
                     minibatch_size = batch_size // minibatches
@@ -77,7 +112,7 @@ class Student:
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
-                y = Categorical(self.model(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
+                y = Categorical(self.model(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item() # and it's as simple as that! :P
                 x = (x + [y])[-n_ctx:]
                 if output is not None:
                     output.append(y)

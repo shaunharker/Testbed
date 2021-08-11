@@ -69,8 +69,7 @@ class AdamW(Optimizer):
         self.n = initial_step
 
     def params(self):
-        return [p for group in self.param_groups for p in group['params']
-                if p.grad is not None and not p.grad.is_sparse]
+        return [p for group in self.param_groups for p in group['params'] if p.requires_grad]
 
     def _setup(self):
         for (idx, p) in enumerate(self.params()):
