@@ -1,8 +1,10 @@
 import torch
-from ..util import memory_allocated, memory_free
+from ..util import memory_allocated, memory_free, TwoWindowFilter
 import numpy as np
 import copy
+import random
 from random import randrange
+from time import time
 
 class Student:
     def __init__(self, path=None, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None):
@@ -23,31 +25,45 @@ class Student:
         else:
             self.example_length = self.model.n_ctx + 1
         self.call_minibatches_cache = {} # cache to remember how to split up memory constrained step calls, keyed by (batch_size, example_length)
+        self.times = []
+        self.grades = []
+        self.time = 0.0
+        self.grade = 0.0
+        self.gradefilter = TwoWindowFilter()
+        self.exps = []
+
+    def __del__(self):
+        del self.model
+        del self.optimizer
 
     def clone(self):
         return copy.deepcopy(self)
 
+    def set_bs(self, lr):
+        self.batch_size = lambda _: bs
+        return self
+
+    def set_lr(self, lr):
+        self.optimizer.param_groups[0]["lr"] = lambda _: lr
+        return self
+
     def mutate(self):
-        c = random.choice(["batch_size", "lr"])
-        if c == "batch_size":
-            if self.batch_size == 1:
-                self.batch_size = 2
-            else:
-                c = random.choice(["half","double"])
-                if c == "half":
-                    self.batch_size = self.batch_size // 2
-                elif c == "double":
-                    self.batch_size = self.batch_size * 2
-        elif c == "lr":
-            c = random.choice(["half","double"])
-            if c == "half":
-                self.optimizer.lr = self.optimizer.lr // 2
-            elif c == "double":
-                self.optimizer.lr = self.optimizer.lr * 2
+        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
+        self.batch_size = int(r*self.batch_size)
+        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
+        lr = self.optimizer.param_groups[0]["lr"](0)
+        lr = lr*r
+        if lr == 0.0:
+            lr = 1e-6 # minimum learning rate, maybe should lower
+        self.optimizer.param_groups[0]["lr"] = lambda _: lr
 
     def save(self, path):
-        checkpoint = {"model": self.model, "optimizer": self.optimizer, "dataset": self.dataset,
-            "batch_size": self.batch_size, "example_length": example_length}
+        checkpoint = {
+            "model": self.model,
+            "optimizer": self.optimizer,
+            "dataset": self.dataset,
+            "batch_size": self.batch_size,
+            "example_length": self.example_length}
         torch.save(checkpoint, path)
 
     def load(self, path):
@@ -60,11 +76,19 @@ class Student:
 
     def study(self):
         closure = lambda: self.grad_computation()
-        return np.sum(self.optimizer.step(closure))/self.batch_size
+        start = time()
+        losses = self.optimizer.step(closure)
+        elapsed = time() - start
+        grade = 1.0 - np.sum(losses)/self.batch_size
+        self.grades.append(grade)
+        self.grade = self.gradefilter(grade)
+        self.times.append(elapsed)
+        self.time += elapsed
 
     def grad_computation(self):
         batch_size = self.batch_size
         example_length = self.example_length
+        self.exps.append(batch_size * example_length)
         minibatches = self.call_minibatches_cache.get((batch_size, example_length), 1)
         minibatch_size = batch_size // minibatches
         while True:
@@ -72,8 +96,14 @@ class Student:
                 if torch.is_grad_enabled():
                     self.optimizer.zero_grad()
                 Y = []
-                for _ in range(minibatches):
-                    X = self.dataset.batch(batch_size=minibatch_size, example_length=example_length)
+                for i in range(minibatches+1):
+                    if i == minibatches:
+                        last_minibatch_size = batch_size % minibatch_size
+                        if last_minibatch_size == 0:
+                            continue
+                        X = self.dataset.batch(batch_size=last_minibatch_size, example_length=example_length)
+                    else:
+                        X = self.dataset.batch(batch_size=minibatch_size, example_length=example_length)
                     batch_losses = self.model(X)
                     if torch.is_grad_enabled():
                         loss = torch.sum(batch_losses)/torch.numel(batch_losses)
@@ -88,6 +118,7 @@ class Student:
                     minibatch_size = batch_size // minibatches
                     if minibatch_size == 0:
                         raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
+                    minibatches = batch_size // minibatch_size
                     self.call_minibatches_cache[(batch_size, example_length)] = minibatches
                     f = memory_free()
                     a = memory_allocated()
@@ -95,6 +126,7 @@ class Student:
                              f"{minibatches} minibatches of size {minibatch_size} "
                              f"due to memory constraints.\n")
                 else:
+                    print(e)
                     raise e
 
     @torch.no_grad()
@@ -112,7 +144,7 @@ class Student:
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
-                y = Categorical(self.model(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item() # and it's as simple as that! :P
+                y = Categorical(self.model(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
                 x = (x + [y])[-n_ctx:]
                 if output is not None:
                     output.append(y)

@@ -1,6 +1,11 @@
 import torch
 from math import log
-from .filters import Filter, KalmanFilter1D, MedianFilter, TwoWindowFilter
+from .filters import FilteredList
+from .filters import KalmanFilter1D
+from .filters import MedianFilter
+from .filters import TwoWindowFilter
+from .filters import CountFilter
+from .filters import SumFilter
 from pathlib import Path
 from functools import lru_cache
 from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlInit

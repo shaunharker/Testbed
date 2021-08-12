@@ -2,20 +2,21 @@ import torch
 from torch.optim import Optimizer
 
 
-class EMA:
-    def __init__(self, param, x=None):
+class EMAFilter:
+    def __init__(self, param):
         self.param = param
-        self.x = x
+        self.n = 0
+        self.x = None
 
-    def step(self, x):
+    def __call__(self, x):
         if self.x is None:
-            self.x = x
+            self.x = torch.zeros_like(x, memory_format=torch.preserve_format)
         else:
-            self.x.mul_(self.param).add_(x, alpha=1-self.param)
+            beta = self.param(self.n)
+            self.x.mul_(beta).add_(x, alpha=1-beta)
+        self.n += 1
         return self.x
 
-    def __call__(self):
-        return self.x
 
 
 class AdamW(Optimizer):
@@ -53,48 +54,41 @@ class AdamW(Optimizer):
 
     def __init__(self,
                  parameters,
-                 lr=lambda step: .001,
-                 beta1=lambda step: 0.9,
-                 beta2=lambda step: 0.999,
-                 eps=lambda step: 1e-8,
-                 weight_decay=lambda step: 0.01,
-                 initial_step=0):
-        super().__init__(parameters, {})
-        self.lr = lr
-        self.beta1 = beta1
-        self.beta2 = beta2
-        self.eps = eps
-        self.weight_decay = weight_decay
-        self.initial_step = initial_step
-        self.n = initial_step
-
-    def params(self):
-        return [p for group in self.param_groups for p in group['params'] if p.requires_grad]
-
-    def _setup(self):
-        for (idx, p) in enumerate(self.params()):
-            zeros = lambda : torch.zeros_like(p, memory_format=torch.preserve_format)
-            self.state[idx]={'ema_grad': EMA(self.beta1(self.n), zeros()),
-                             'ema_sqr_grad': EMA(self.beta2(self.n), zeros())}
+                 lr=lambda n: .001,
+                 beta1=lambda n: 0.9,
+                 beta2=lambda n: 0.999,
+                 eps=lambda n: 1e-8,
+                 weight_decay=lambda n: 0.01,
+                 n=0):
+        super().__init__(parameters, {"lr": lr, "beta1": beta1, "beta2": beta2, "eps": eps, "weight_decay": weight_decay, "n": n})
 
     @torch.no_grad()
     def step(self, closure):
         with torch.enable_grad():
             result = closure()
-        if self.n == self.initial_step:
-            self._setup()
-        self.n += 1
-        for (idx, p) in enumerate(self.params()):
-            p.grad.data = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
-            self.state[idx]['ema_grad'].step(p.grad.data)
-            p.grad.data.square_()
-            self.state[idx]['ema_sqr_grad'].step(p.grad.data)
-        bias_correction1 = 1 - self.beta1(self.n) ** self.n
-        bias_correction2 = 1 - self.beta2(self.n) ** self.n
-        for (idx, p) in enumerate(self.params()):
-            G = self.state[idx]['ema_grad']()/bias_correction1
-            G2 = self.state[idx]['ema_sqr_grad']()/bias_correction2
-            torch.sqrt_(G2).add_(self.eps(self.n))
-            G.div_(G2).add_(p.data,alpha=self.weight_decay(self.n))
-            p.data.sub_(G,alpha=self.lr(self.n))
+        for group in self.param_groups:
+            lr = group["lr"]
+            beta1 = group["beta1"]
+            beta2 = group["beta2"]
+            eps = group["eps"]
+            weight_decay = group["weight_decay"]
+            n = group["n"]
+            if n == 0:
+                for p in group["params"]:
+                    self.state[p]={'ema_grad': EMAFilter(beta1), 'ema_sqr_grad': EMAFilter(beta2)}
+            n += 1
+            group["n"] = n
+            bias_correction1 = 1 - beta1(n) ** n
+            bias_correction2 = 1 - beta2(n) ** n
+            assert bias_correction1 > 0
+            assert bias_correction2 > 0
+            for p in group["params"]:
+                state = self.state[p]
+                g = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0) # can this be done inplace? meh p.o.
+                G = state['ema_grad'](g)/bias_correction1
+                g.square_()
+                G2 = state['ema_sqr_grad'](g)/bias_correction2
+                torch.sqrt_(G2).add_(eps(n))
+                G.div_(G2).add_(p.data,alpha=weight_decay(n))
+                p.data.sub_(G,alpha=lr(n))
         return result

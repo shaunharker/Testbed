@@ -9,7 +9,8 @@ import asyncio
 from collections import defaultdict
 
 class Plot:
-    def __init__(self, **plots):
+    def __init__(self, legend=True, **plots):
+        self.legend = legend
         self.bokeh = {}
         self.count = 0
         if "x" in plots:
@@ -21,7 +22,7 @@ class Plot:
             self.y = plots["y"]
             del plots["y"]
         else:
-            self.y = "mean_loss"
+            self.y = "grade"
         self.task = None
         self.plots = plots
 
@@ -32,7 +33,13 @@ class Plot:
         self.bokeh["figure"].add_tools(self.hover)
         for name in self.plots:
             self.count += 1
-            self.bokeh[name] = self.bokeh["figure"].line([], [], line_width=2, color=Spectral4[(self.count-1)%4], alpha=.8, legend_label=name)
+            if self.legend:
+                self.bokeh[name] = self.bokeh["figure"].line([], [], line_width=2, color=Spectral4[(self.count-1)%4], alpha=.8, legend_label=name)
+            else:
+                self.bokeh[name] = self.bokeh["figure"].line([], [], line_width=2, color=Spectral4[(self.count-1)%4], alpha=.8)
+        if self.legend:
+            self.bokeh["figure"].legend.location = "bottom_right"
+        #self.bokeh["figure"].add_layout(self.bokeh["figure"].legend[0], 'right')
         self.bokeh_handle = show(self.bokeh["figure"], notebook_handle=True)
         if self.task is None:
             self.task = asyncio.create_task(Plot.loop(self.plots, self.bokeh, self.bokeh_handle))
@@ -75,6 +82,10 @@ class Plot:
                         n = min(len(xdata), len(ydata))
                         xdata = xdata[:n]
                         ydata = ydata[:n]
+                        # if t == 0:
+                        #     # only see tail end, reduce need to zoom
+                        #     xdata = xdata[n//2:]
+                        #     ydata = ydata[n//2:]
                         if n > 0:
                             bokeh[name].data_source.stream({'x': xdata, 'y': ydata})
                         tick[name] += n

@@ -1,12 +1,12 @@
 from sortedcontainers import SortedList
 import asyncio
 
-class Filter:
-    def __init__(self, input, F):
+class FilteredList:
+    def __init__(self, input, filter):
         self.input = input
-        self.F = F
+        self.filter = filter
         self.data = []
-        self.task = asyncio.create_task(Filter.loop(self.input, self.F, self.data))
+        self.task = asyncio.create_task(FilteredList.loop(self.input, self.filter, self.data))
 
     def __del__(self):
         try:
@@ -36,9 +36,10 @@ class Filter:
         return self.data.extend(xs)
 
     @staticmethod
-    async def loop(input, F, output):
+    async def loop(input, filter, output):
         while True:
-            output += [F(x) for x in input[len(output):]]
+            # TODO: better way to use asyncio here?
+            output += [filter(x) for x in input[len(output):]]
             await asyncio.sleep(.01)
 
 
@@ -73,6 +74,14 @@ class TwoWindowFilter:
             t = (i-j)/j
             return t*mu1 + (1-t)*mu2
 
+class CountFilter:
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self, x):
+        self.count += 1
+        return self.count
+
 class DiffFilter:
     def __init__(self):
         self.x = None
@@ -86,7 +95,7 @@ class DiffFilter:
             self.x = x
             return x - y
 
-class CsumFilter:
+class SumFilter:
     def __init__(self):
         self.x = 0
 
