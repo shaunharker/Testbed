@@ -135,5 +135,6 @@ class MLPLM(Module):
         self.n_vocab_out = n_vocab_out
         self.F = LanguageModel(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, nonlinearity=nonlinearity, d_out=n_vocab_out), Lambda(lambda x: x.view(-1, 1, n_vocab_out))), n_vocab_out=n_vocab_out, mode="last")
 
+    @autocast()
     def forward(self, x):
         return self.F(x)
