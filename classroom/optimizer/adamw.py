@@ -89,6 +89,6 @@ class AdamW(Optimizer):
                 g.square_()
                 G2 = state['ema_sqr_grad'](g)/bias_correction2
                 torch.sqrt_(G2).add_(eps(n))
-                G.div_(G2).add_(p.data,alpha=weight_decay(n))
+                G.div_(G2)#.add_(p.data,alpha=weight_decay(n))
                 p.data.sub_(G,alpha=lr(n))
         return result

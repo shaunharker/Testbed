@@ -27,11 +27,6 @@ class Classroom:
         self.students.append(student)
         self.tasks[student] = asyncio.create_task(_train(student, self.students))
 
-    def rank_students(self):
-        def key(student):
-            return student.grade
-        self.students.sort(key=key)
-
     def graduate(self, idx=0):
         if len(self.students) == 0:
             return None # or should we raise

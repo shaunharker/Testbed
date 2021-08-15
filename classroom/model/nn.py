@@ -1,6 +1,6 @@
 import math
 import torch
-from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU
+from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU, LayerNorm
 from torch.nn import Embedding as TorchEmbedding
 from torch.nn import Linear as TorchAffine
 from torch.cuda.amp import autocast
@@ -59,8 +59,8 @@ class Lambda(Module):
 
 
 class Affine(TorchAffine):
-    def __init__(self, d_in, d_out):
-        super().__init__(d_in, d_out)
+    def __init__(self, d_in, d_out, bias=True):
+        super().__init__(d_in, d_out, bias)
         self.d_in = d_in
         self.d_out = d_out
 
@@ -101,7 +101,7 @@ class MLP(Module):
         self.d_hidden = d_hidden
         self.d_out = d_out
         self.nonlinearity = nonlinearity
-        self.F = Sequential(Affine(d_in=d_in, d_out=d_hidden), Nonlinearity(nonlinearity), Affine(d_in=d_hidden, d_out=d_out))
+        self.F = Sequential(Affine(d_in=d_in, d_out=d_hidden, bias=False), LayerNorm(d_hidden), Nonlinearity(nonlinearity), Affine(d_in=d_hidden, d_out=d_out))
 
     def forward(self, x):
         return self.F(x)

@@ -1,5 +1,5 @@
 import torch
-from ..util import memory_allocated, memory_free, TwoWindowFilter
+from ..util import memory_allocated, memory_free
 import numpy as np
 import copy
 import random
@@ -28,8 +28,6 @@ class Student:
         self.times = []
         self.grades = []
         self.time = 0.0
-        self.grade = 0.0
-        self.gradefilter = TwoWindowFilter()
         self.exps = []
 
     def __del__(self):
@@ -81,7 +79,6 @@ class Student:
         elapsed = time() - start
         grade = 1.0 - np.sum(losses)/self.batch_size
         self.grades.append(grade)
-        self.grade = self.gradefilter(grade)
         self.times.append(elapsed)
         self.time += elapsed
 

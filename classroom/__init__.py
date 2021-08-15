@@ -11,6 +11,7 @@ from classroom.dataset import UTF8Dataset, SeqDataset
 from classroom.model import MLPLM
 from classroom.model import TransformerLM
 from classroom.optimizer import AdamW
+from classroom.optimizer import Sonny, Floyd
 from classroom.student import Student
 from classroom.classroom import Classroom
 from classroom.util import FilteredList
