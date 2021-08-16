@@ -1,4 +1,5 @@
 import torch
+from torch.cuda.amp import autocast
 from ..util import memory_allocated, memory_free
 import numpy as np
 import copy
