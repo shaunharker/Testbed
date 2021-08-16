@@ -6,80 +6,35 @@ from pathlib import Path
 import torch
 import types
 import time
+from multiprocessing import Process, Queue, Event
 
 class UTF8Dataset:
-    """
-    class UTF8Dataset
-    --------------------
-    ARGS:
-        path:
-            TYPE: str
-            DESC: the location of the dataset text file
-                  Currently defaults to gutenberg.utf8,
-                  which is 14GB of Gutenberg text reencoded in utf8
-    """
     def __init__(self,
                  path=None):
         if path is None:
             path = f"/home/{os.environ.get('USER')}/data/gutenberg.1024.utf8"
         self.path = path
-        self.n_bytes = Path(path).stat().st_size
-        self.snippet = 0
+        self.n_bytes = Path(self.path).stat().st_size
+        self.mem = np.memmap(path, mode='r')
+        self.start = 0
+        self.cache = torch.tensor([], dtype=torch.long, device='cuda')
+        self.end = 0
+        self.pos = 0
 
     def batch(self, batch_size, example_length):
-        """
-        public method batch(self, batch_size, example_length)
-        ---------------------------------------------------------------
-        DESC: This method returns a batch of batch_size examples
-              of length example_length each subsequent example
-              intersecting by half their width (and thus every
-              example being covered by its neighbor and every
-              example_length substring being an example.)
-            batch_size: int
-                the number of examples in the returned batch
-            example_length: int
-                the number of bytes in an example in the returned batch
-        RETURNS:
-            result:
-                TYPE: torch.Tensor
-                SHAPE: [batch_size, example_length]
-                DTYPE: torch.uint8
-                DEVICE: 'cuda'
-        """
-        def examples():
-            for _ in range(batch_size):
-                jitter = randrange(1024-example_length)
-                offset = 1024*self.snippet + jitter
-                if offset + example_length >= self.n_bytes:
-                    self.snippet = 0
-                    offset = jitter
-                yield torch.tensor(np.fromfile(self.path, dtype=np.uint8, count=example_length,
-                    offset=offset).reshape(1,example_length), dtype=torch.long, device='cuda')
-                self.snippet += 1
-        return torch.cat([x for x in examples()])
+        shift_index = self.pos % (1024 - example_length + 1)
+        batch_index = self.pos // (1024 - example_length + 1)
+        # print(shift_index, batch_index)
+        if self.start != 1024*batch_index*batch_size or self.end != 1024*(batch_index+1)*batch_size:
+            self.start = 1024*batch_index*batch_size
+            self.end = 1024*(batch_index+1)*batch_size
+            self.cache = torch.tensor(self.mem[self.start:self.end], dtype=torch.long, device='cuda').view(batch_size, 1024)
+        result = self.cache[:,shift_index:shift_index+example_length].contiguous()
+        self.pos += 1
+        return result
 
     @staticmethod
     def encode(char_sequence):
-        """
-        static method UTF8Dataset.encode(char_sequence)
-        -----------------------------------------------
-        ARGS:
-            char_sequence:
-                type: str | generator[char]
-                desc: the string we will return the utf8 encoding for
-        RETURNS:
-            if type(char_sequence) == generator[char]:
-                result:
-                    TYPE: uint8 generator
-                    DESC: a uint8 generator which yields the bytes
-                          resulting from encoding the generator
-                          char_sequence
-            elif type(char_sequence) == str:
-                result:
-                    TYPE: bytes
-                    DESC: the bytes resulting from encoding the
-                          string char_sequence
-        """
         if type(char_sequence) == types.GeneratorType:
             def stream():
                 for c in char_sequence:
@@ -92,27 +47,6 @@ class UTF8Dataset:
 
     @staticmethod
     def decode(byte_sequence):
-        """
-        static method UTF8Dataset.decode(byte_sequence)
-        -----------------------------------------------
-        DESC:
-            a fault-tolerant utf8 decoder
-        ARGS:
-            byte_sequence:
-                type: uint8 iterable (e.g. bytes)
-                desc: a bytes iterable which is to be decoded as utf8 where
-                      invalid utf8 is handled by ignoring invalid bytes
-        RETURNS:
-            if type(byte_sequence) == types.GeneratorType
-                result:
-                    TYPE: str generator
-                    DESC: a str generator which yields the characters
-                          of the string resulting from decoding s
-            else:
-                result:
-                    TYPE: str
-                    DESC: the string resulting from decoding s
-        """
         def is_valid_utf8_byte(b):
             return b&0b11111000 != 0b11111000
         def is_payload_utf8_byte(b):

@@ -73,7 +73,24 @@ class Student:
         self.example_length = checkpoint["example_length"]
 
     def study(self):
-        closure = lambda: self.grad_computation()
+        def closure():
+            batch_size = self.batch_size
+            example_length = self.example_length
+            self.exps.append(batch_size * example_length)
+            if torch.is_grad_enabled():
+                self.optimizer.zero_grad()
+            X = self.dataset.batch(batch_size=batch_size, example_length=example_length)
+            try:
+                batch_losses = self.model(X)
+            except Exception as e:
+                if self.batch_size == 1:
+                    raise e
+                print(f"Due to {e}, setting batch_size to {batch_size//2}")
+                self.batch_size = max(1, self.batch_size//2)
+            if torch.is_grad_enabled():
+                loss = torch.sum(batch_losses)/torch.numel(batch_losses)
+                loss.backward()
+            return batch_losses.detach().cpu().numpy()
         start = time()
         losses = self.optimizer.step(closure)
         elapsed = time() - start
@@ -82,49 +99,8 @@ class Student:
         self.times.append(elapsed)
         self.time += elapsed
 
-    def grad_computation(self):
-        batch_size = self.batch_size
-        example_length = self.example_length
-        self.exps.append(batch_size * example_length)
-        minibatches = self.call_minibatches_cache.get((batch_size, example_length), 1)
-        minibatch_size = batch_size // minibatches
-        while True:
-            try:
-                if torch.is_grad_enabled():
-                    self.optimizer.zero_grad()
-                Y = []
-                for i in range(minibatches+1):
-                    if i == minibatches:
-                        last_minibatch_size = batch_size % minibatch_size
-                        if last_minibatch_size == 0:
-                            continue
-                        X = self.dataset.batch(batch_size=last_minibatch_size, example_length=example_length)
-                    else:
-                        X = self.dataset.batch(batch_size=minibatch_size, example_length=example_length)
-                    batch_losses = self.model(X)
-                    if torch.is_grad_enabled():
-                        loss = torch.sum(batch_losses)/torch.numel(batch_losses)
-                        loss.backward()
-                    Y.append(batch_losses.detach())
-                Y = torch.cat(Y)
-                return Y.cpu().numpy()
-            except RuntimeError as e:
-                if "CUDA" in str(e):
-                    torch.cuda.empty_cache()
-                    minibatches *= 2
-                    minibatch_size = batch_size // minibatches
-                    if minibatch_size == 0:
-                        raise RuntimeError("Cannot compute gradient even with minibatch_size=1.")
-                    minibatches = batch_size // minibatch_size
-                    self.call_minibatches_cache[(batch_size, example_length)] = minibatches
-                    f = memory_free()
-                    a = memory_allocated()
-                    print(f"Splitting batch of {batch_size} examples into "
-                             f"{minibatches} minibatches of size {minibatch_size} "
-                             f"due to memory constraints.\n")
-                else:
-                    print(e)
-                    raise e
+
+
 
     @torch.no_grad()
     def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, output=None):
