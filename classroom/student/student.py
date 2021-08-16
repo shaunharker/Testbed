@@ -73,6 +73,7 @@ class Student:
         self.example_length = checkpoint["example_length"]
 
     def study(self):
+        @autocast()
         def closure():
             batch_size = self.batch_size
             example_length = self.example_length
