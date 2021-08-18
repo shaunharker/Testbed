@@ -1,6 +1,6 @@
 import torch
 from torch.cuda.amp import autocast
-from ..util import memory_allocated, memory_free
+from ..util import TwoWindowFilter
 import numpy as np
 import copy
 import random
@@ -25,11 +25,18 @@ class Student:
             self.example_length = example_length
         else:
             self.example_length = self.model.n_ctx + 1
-        self.call_minibatches_cache = {} # cache to remember how to split up memory constrained step calls, keyed by (batch_size, example_length)
+        self.time = 0.0
         self.times = []
         self.grades = []
-        self.time = 0.0
-        self.exps = []
+        self.loss_shaping = None
+        self.baseline_model = None
+        self.baseline_grades = []
+        self.shaped_losses = []
+        self.relative_grades = []
+        self.example_losses = []
+
+    def set_baseline(self, baseline_model):
+        self.baseline_model = baseline_model
 
     def __del__(self):
         del self.model
@@ -37,14 +44,6 @@ class Student:
 
     def clone(self):
         return copy.deepcopy(self)
-
-    def set_bs(self, lr):
-        self.batch_size = lambda _: bs
-        return self
-
-    def set_lr(self, lr):
-        self.optimizer.param_groups[0]["lr"] = lambda _: lr
-        return self
 
     def mutate(self):
         r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
@@ -73,36 +72,41 @@ class Student:
         self.batch_size = checkpoint["batch_size"]
         self.example_length = checkpoint["example_length"]
 
+    @autocast()
     def study(self):
-        @autocast()
         def closure():
             batch_size = self.batch_size
             example_length = self.example_length
-            self.exps.append(batch_size * example_length)
+            X = self.dataset.batch(batch_size=batch_size, example_length=example_length)
+            losses = self.model(X)
+            if self.baseline_model is not None:
+                with torch.no_grad():
+                    denom_losses = self.baseline_model(X)
+                    self.baseline_grades.append(1.0 - torch.mean(denom_losses).item())
+                try:
+                    shaped_losses = self.loss_shaping(losses, denom_losses)
+                except:
+                    shaped_losses = losses
+            else:
+                try:
+                    shaped_losses = self.loss_shaping(losses)
+                except:
+                    shaped_losses = losses
+            shaped_losses = torch.nan_to_num(shaped_losses, nan=0.0, posinf=0.0, neginf=0.0)
             if torch.is_grad_enabled():
                 self.optimizer.zero_grad()
-            X = self.dataset.batch(batch_size=batch_size, example_length=example_length)
-            try:
-                batch_losses = self.model(X)
-            except Exception as e:
-                if self.batch_size == 1:
-                    raise e
-                print(f"Due to {e}, setting batch_size to {batch_size//2}")
-                self.batch_size = max(1, self.batch_size//2)
-            if torch.is_grad_enabled():
-                loss = torch.sum(batch_losses)/torch.numel(batch_losses)
-                loss.backward()
-            return batch_losses.detach().cpu().numpy()
+                torch.mean(shaped_losses).backward()
+            return losses.detach().cpu().numpy(), shaped_losses.detach().cpu().numpy()
         start = time()
-        losses = self.optimizer.step(closure)
+        losses, shaped_losses = self.optimizer.step(closure)
         elapsed = time() - start
-        grade = 1.0 - np.sum(losses)/self.batch_size
-        self.grades.append(grade)
-        self.times.append(elapsed)
         self.time += elapsed
-
-
-
+        self.grades.append(1.0 - np.sum(losses)/self.batch_size)
+        self.example_losses.extend(losses)
+        self.times.append(elapsed)
+        self.shaped_losses.append(np.sum(shaped_losses)/self.batch_size)
+        if len(self.baseline_grades) > 0:
+            self.relative_grades.append(self.grades[-1]/self.baseline_grades[-1])
 
     @torch.no_grad()
     def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, output=None):
@@ -119,7 +123,7 @@ class Student:
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
-                y = Categorical(self.model(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
+                y = Categorical(self.model.inference(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
                 x = (x + [y])[-n_ctx:]
                 if output is not None:
                     output.append(y)

@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 import types
 import time
+from multiprocessing import Process, Queue, Event
 
 class SeqDataset:
     def __init__(self,
@@ -14,17 +15,13 @@ class SeqDataset:
             path = f"/home/{os.environ.get('USER')}/data/gutenberg.utf8"
         self.path = path
         self.n_bytes = Path(path).stat().st_size
-        self.offset = 0
 
-    def batch(self, batch_size, example_length):
-        def examples():
-            for _ in range(batch_size):
-                if self.offset >= self.n_bytes:
-                    self.offset = 0
-                yield torch.tensor(np.fromfile(self.path, dtype=np.uint8, count=example_length,
-                    offset=self.offset).reshape(1,example_length), dtype=torch.long, device='cuda')
-                self.offset += 1
-        return torch.cat([x for x in examples()])
+    def __len__(self):
+        return self.n_bytes // 1024
+
+    def __getitem__(self, idx):
+        return np.fromfile(path, dtype=np.uint8, count=1024,
+                        offset=1024*idx)
 
     @staticmethod
     def encode(char_sequence):

@@ -19,5 +19,5 @@ setup(
     zip_safe=True,
     url = '',
     download_url = '',
-    install_requires=['torch', 'bokeh', 'numpy']
+    install_requires=['torch', 'bokeh', 'scipy', 'dill', 'numpy', 'sortedcontainers']
 )

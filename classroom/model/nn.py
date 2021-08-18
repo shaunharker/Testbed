@@ -3,10 +3,9 @@ import torch
 from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU, LayerNorm
 from torch.nn import Embedding as TorchEmbedding
 from torch.nn import Linear as TorchAffine
-from torch.cuda.amp import autocast
 import dill
 from types import GeneratorType
-
+import copy
 
 class SplitExample(Module):
     def __init__(self, mode="last"):
@@ -106,6 +105,14 @@ class MLP(Module):
     def forward(self, x):
         return self.F(x)
 
+    @torch.no_grad()
+    def canonicalize(self):
+        W = self.F.layers[0].weight
+        N = torch.numel(W)
+        W -= torch.mean(W)
+        W /= math.sqrt(torch.sum(W*W)/(N-1))
+        W.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
+
 
 class LanguageModel(Module):
     def __init__(self, F, n_vocab_out, mode):
@@ -116,13 +123,13 @@ class LanguageModel(Module):
         self.softmax = Softmax()
 
     def forward(self, xy):
-        if torch.is_grad_enabled():
-            (x, y) = self.split_example(xy)
-            x = self.F(x)
-            return self.crossentropyloss(x, y)/x.shape[-2]
-        else:
-            return self.softmax(self.F(xy))
+        (x, y) = self.split_example(xy)
+        x = self.F(x)
+        return self.crossentropyloss(x, y)/x.shape[-2]
 
+    @torch.no_grad()
+    def inference(self, x):
+        return self.softmax(self.F(x))
 
 class MLPLM(Module):
     def __init__(self, n_ctx, n_vocab_in, d_model, d_hidden, nonlinearity, n_vocab_out):
@@ -133,8 +140,29 @@ class MLPLM(Module):
         self.d_hidden = d_hidden
         self.nonlinearity = nonlinearity
         self.n_vocab_out = n_vocab_out
-        self.F = LanguageModel(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, nonlinearity=nonlinearity, d_out=n_vocab_out), Lambda(lambda x: x.view(-1, 1, n_vocab_out))), n_vocab_out=n_vocab_out, mode="last")
+        self.LM = LanguageModel(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, nonlinearity=nonlinearity, d_out=n_vocab_out), Lambda(lambda x: x.view(-1, 1, n_vocab_out))), n_vocab_out=n_vocab_out, mode="last")
 
-    @autocast()
     def forward(self, x):
-        return self.F(x)
+        return self.LM(x)
+
+    @torch.no_grad()
+    def inference(self, x):
+        return self.LM.inference(x)
+
+    def clone(self):
+        return copy.deepcopy(self)
+
+    @torch.no_grad()
+    def canonicalize(self):
+        E = self.LM.F.layers[0].weight
+        N = torch.numel(E)
+        Emu = torch.mean(E)
+        E -= Emu
+        E /= math.sqrt(torch.sum(E**2/(N-1)))
+        E.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
+        MLP = self.LM.F.layers[2]
+        W = MLP.F.layers[0].weight # affine weight
+        G = MLP.F.layers[1].weight # layernorm gain
+        B = MLP.F.layers[1].bias # layernorm bias
+        B += torch.sum(W,dim=1).view(-1)*G*Emu
+        MLP.canonicalize()

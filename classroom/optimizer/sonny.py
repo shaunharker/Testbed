@@ -79,6 +79,6 @@ class Sonny(Optimizer):
                 g = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
                 (mean, variance) = self.state[p](g)
                 dp = torch.nan_to_num(mean/torch.sqrt(variance), nan=0.0, posinf=0.0, neginf=0.0)
-                dp = lr(n)*torch.tanh(dp)*torch.abs(p.data)
+                dp = lr(n)*torch.tanh(dp)
                 p.data -= dp
         return result
