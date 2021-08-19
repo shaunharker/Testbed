@@ -131,6 +131,38 @@ class LanguageModel(Module):
     def inference(self, x):
         return self.softmax(self.F(x))
 
+class LanguageModel2(Module):
+    def __init__(self, F, n_vocab_out, mode):
+        super().__init__()
+        self.F = F
+        self.n_vocab_out = n_vocab_out
+        self.mode = mode
+        self.split_example = SplitExample(mode)
+
+    def forward(self, xy):
+        (x, y) = self.split_example(xy)
+        n_ctx = x.shape[-2]
+        x = self.F(x)
+        x = x**2 # torch.exp(x)
+        x = x / torch.sum(x,dim=-1,keepdim=True)
+        p = 1/self.n_vocab_out
+        x = torch.nan_to_num(x, nan=p, posinf=p, neginf=p)
+        result = torch.gather(input=x.view(-1,self.n_vocab_out), dim=-1, index=y.view(-1, 1))
+        #print(f"A {result.shape} torch.gather(input=x.view(-1,self.n_vocab_out), dim=-1, index=y.view(-1, 1))={torch.gather(input=x.view(-1,self.n_vocab_out), dim=-1, index=y.view(-1, 1))}")
+        #print(f"B x[0]={x[0]} with shape {x[0].shape} (x has shape {x.shape}) sum = {torch.sum(x[0])}")
+        result = -torch.log(result)/math.log(self.n_vocab_out)
+        result = torch.clamp(torch.nan_to_num(result),min=0.0,max=2.0)
+        #print(f"C {result}, mean = {torch.mean(result)}, result shape = {result.shape}")
+        #raise hell
+        return result
+
+    @torch.no_grad()
+    def inference(self, x):
+        x = self.F(x)
+        x = x**2 # torch.exp(x)
+        x = x / torch.sum(x)
+        return x
+
 class MLPLM(Module):
     def __init__(self, n_ctx, n_vocab_in, d_model, d_hidden, nonlinearity, n_vocab_out):
         super().__init__()
@@ -166,3 +198,44 @@ class MLPLM(Module):
         B = MLP.F.layers[1].bias # layernorm bias
         B += torch.sum(W,dim=1).view(-1)*G*Emu
         MLP.canonicalize()
+
+class MLPLM2(Module):
+    def __init__(self, n_ctx, n_vocab_in, d_model, d_hidden, nonlinearity, n_vocab_out):
+        super().__init__()
+        self.n_ctx = n_ctx
+        self.n_vocab_in = n_vocab_in
+        self.d_model = d_model
+        self.d_hidden = d_hidden
+        self.nonlinearity = nonlinearity
+        self.n_vocab_out = n_vocab_out
+        self.LM = LanguageModel2(Sequential(Embedding(n_classes=n_vocab_in, d_model=d_model), Lambda(lambda x: x.view(-1,n_ctx*d_model)), MLP(d_in=n_ctx*d_model, d_hidden=d_hidden, nonlinearity=nonlinearity, d_out=n_vocab_out), Lambda(lambda x: x.view(-1, 1, n_vocab_out))), n_vocab_out=n_vocab_out, mode="last")
+
+    def forward(self, x):
+        return self.LM(x)
+
+    @torch.no_grad()
+    def inference(self, x):
+        return self.LM.inference(x)
+
+    def clone(self):
+        return copy.deepcopy(self)
+
+    @torch.no_grad()
+    def canonicalize(self):
+        E = self.LM.F.layers[0].weight
+        N = torch.numel(E)
+        Emu = torch.mean(E)
+        E -= Emu
+        E /= math.sqrt(torch.sum(E**2/(N-1)))
+        E.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
+        MLP = self.LM.F.layers[2]
+        W = MLP.F.layers[0].weight # affine weight
+        G = MLP.F.layers[1].weight # layernorm gain
+        B = MLP.F.layers[1].bias # layernorm bias
+        B += torch.sum(W,dim=1).view(-1)*G*Emu
+        MLP.canonicalize()
+        W = MLP.F.layers[3].weight # output weight
+        B = MLP.F.layers[3].bias # output bias
+        s = math.sqrt((torch.sum(W**2) + torch.sum(B**2)) / (torch.numel(W) + torch.numel(B) - 1))
+        W /= s
+        B /= s

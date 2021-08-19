@@ -12,6 +12,7 @@ from classroom.dataset import SeqDataset
 from classroom.dataset import RandomDataset
 
 from classroom.model import MLPLM
+from classroom.model import MLPLM2
 from classroom.model import TransformerLM
 
 from classroom.optimizer import AdamW

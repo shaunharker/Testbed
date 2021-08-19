@@ -93,9 +93,7 @@ class Student:
                 except:
                     shaped_losses = losses
             shaped_losses = torch.nan_to_num(shaped_losses, nan=0.0, posinf=0.0, neginf=0.0)
-            if torch.is_grad_enabled():
-                self.optimizer.zero_grad()
-                torch.mean(shaped_losses).backward()
+            torch.mean(shaped_losses).backward()
             return losses.detach().cpu().numpy(), shaped_losses.detach().cpu().numpy()
         start = time()
         losses, shaped_losses = self.optimizer.step(closure)

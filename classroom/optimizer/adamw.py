@@ -54,23 +54,31 @@ class AdamW(Optimizer):
 
     def __init__(self,
                  parameters,
-                 lr=lambda n: .001,
+                 lr=lambda n: 0.0 if n < 1000 else 1e-5,
+                 alpha=lambda n: 0.0 if n == 0 else 1.0,
                  beta1=lambda n: 0.9,
                  beta2=lambda n: 0.999,
-                 eps=lambda n: 1e-8,
                  weight_decay=lambda n: 0.01,
                  n=0):
-        super().__init__(parameters, {"lr": lr, "beta1": beta1, "beta2": beta2, "eps": eps, "weight_decay": weight_decay, "n": n})
+        super().__init__(parameters, {"lr": lr, "alpha": alpha, "beta1": beta1, "beta2": beta2, "weight_decay": weight_decay, "n": n})
+        self.lr = {}
 
     @torch.no_grad()
     def step(self, closure):
+        for group in self.param_groups:
+            alpha = group["alpha"]
+            for p in group["params"]:
+                try:
+                    p.grad.data *= alpha(n)
+                except:
+                    pass
         with torch.enable_grad():
             result = closure()
         for group in self.param_groups:
             lr = group["lr"]
+            alpha = group["alpha"]
             beta1 = group["beta1"]
             beta2 = group["beta2"]
-            eps = group["eps"]
             weight_decay = group["weight_decay"]
             n = group["n"]
             if n == 0:
@@ -84,11 +92,15 @@ class AdamW(Optimizer):
             assert bias_correction2 > 0
             for p in group["params"]:
                 state = self.state[p]
+                try:
+                    lr = self.lr[p]
+                except:
+                    lr = group["lr"]
                 g = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0) # can this be done inplace? meh p.o.
                 G = state['ema_grad'](g)/bias_correction1
                 g.square_()
-                G2 = state['ema_sqr_grad'](g)/bias_correction2
-                torch.sqrt_(G2).add_(eps(n))
-                G.div_(G2).add_(p.data,alpha=weight_decay(n))
+                g = state['ema_sqr_grad'](g)/bias_correction2
+                torch.sqrt_(g)
+                G.div_(g).nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0).add_(p.data,alpha=weight_decay(n))
                 p.data.sub_(G,alpha=lr(n))
         return result
