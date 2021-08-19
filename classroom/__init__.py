@@ -10,6 +10,7 @@ import classroom.util
 from classroom.dataset import UTF8Dataset
 from classroom.dataset import SeqDataset
 from classroom.dataset import RandomDataset
+from classroom.dataset import RandomTokensDataset
 
 from classroom.model import MLPLM
 from classroom.model import MLPLM2
