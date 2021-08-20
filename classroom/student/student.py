@@ -10,10 +10,15 @@ from ..dataset import BytesDataset
 
 class Student:
     """
-    Encapsulates (model, optimizer, dataset) and other training hyperparameters and metrics.
-    * Provides methods for genetic algorithms (e.g. for hyperparameter selection)
-    * Provides an autocomplete method to test the model with
-    * Provides a backup mechanism
+    Encapsulates `model`, `optimizer`, `dataset`, `batch_size`, `example_length` for the purposes of training.
+    Stores training metrics (`time`, `times`, `grades`) associated with the calls of `study`
+    ### Notes:
+    * `save` and `load` serialize to and from disk
+    * `push` and `pop` serialize to and from a stack in memory (implemented through the `self.parent` reference)
+    * `clone` creates a clone which is a deepcopy except for `self.parent`, which is not a copy.
+    * `mutate` is a coarse proof-of-principle function at this point
+    The methods `push`, `pop`, `mutate`, and `clone` may be used by genetic algorithms.
+
     """
     def __init__(self, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None):
         self.model = model
@@ -73,7 +78,7 @@ class Student:
         clone.parent = tmp
         return clone
 
-    def backup(self):
+    def push(self):
         """
         Create a clone of `self` and store it in `self.parent`.
         Note that this has a Russian doll effect if called repeatedly,
@@ -81,7 +86,7 @@ class Student:
         """
         self.parent = self.clone()
 
-    def revert(self):
+    def pop(self):
         """
         Revert to the state stored in `self.parent` on the previous `backup` call.
         If no such call took place, then do nothing.

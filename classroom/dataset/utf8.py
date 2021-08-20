@@ -1,6 +1,6 @@
 import types
 
-def encode(char_sequence):
+def utf8encode(char_sequence):
     if type(char_sequence) == types.GeneratorType:
         def stream():
             for c in char_sequence:
@@ -11,7 +11,7 @@ def encode(char_sequence):
         result = bytes(char_sequence, encoding='utf8')
     return result
 
-def decode(byte_sequence):
+def utf8decode(byte_sequence):
     def is_valid_utf8_byte(b):
         return b&0b11111000 != 0b11111000
     def is_payload_utf8_byte(b):

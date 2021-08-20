@@ -1,6 +1,6 @@
 import asyncio
 
-def liveapp(f, kwargs=None, output=None):
+def app(f, kwargs=None, output=None):
     if output is None:
         output = []
     async def loop(f, kwargs, output):
