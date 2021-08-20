@@ -1,4 +1,4 @@
-from .utf8dataset import UTF8Dataset
-from .seqdataset import SeqDataset
-from .randomdataset import RandomDataset
+from .bytesdataset import BytesDataset
+from .utf8 import utf8encode
+from .utf8 import utf8decode
 from .randomtokensdataset import RandomTokensDataset

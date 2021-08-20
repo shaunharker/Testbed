@@ -1,79 +1,50 @@
 import os
+from pathlib import Path
 from random import randrange
 import numpy as np
-import threading
-from pathlib import Path
 import torch
-import types
-import time
-from multiprocessing import Process, Queue, Event
 
-class RandomDataset:
-    """
-    The goal here is the best approximation of random batches
-    that is performant.
-    """
+class BytesDataset:
     def __init__(self,
-                 path=None):
+                 path=None,
+                 mode="random",
+                 stride=1):
         if path is None:
-            path = f"/home/{os.environ.get('USER')}/data/gutenberg.1024.utf8"
+            path = f"/home/{os.environ.get('USER')}/data/gutenberg.utf8"
         self.path = path
+        self.mode = mode
+        self.stride = stride
         self.n_bytes = Path(self.path).stat().st_size
-        self.mem = np.memmap(path, mode='r')
-        self.pos = randrange(self.n_bytes//2)
+        self.data = np.memmap(path, mode='r')
+        self.pos = 0
 
-    def batch(self, batch_size, example_length):
-        if self.pos + 1024*batch_size > self.n_bytes:
-            self.pos = self.pos % (1024*batch_size)
-        result = torch.tensor(self.mem[self.pos:self.pos+1024*batch_size].reshape(batch_size, 1024)[:, :example_length], dtype=torch.long, device='cuda')
-        self.pos += 1024*batch_size + randrange(example_length)
-        return result
+    def batch(self, batch_size, example_length, pos=None):
+        if pos is not None:
+            self.pos = pos
+        if self.mode == "jitter":
+            if self.pos + 1024*batch_size > self.n_bytes:
+                self.pos = self.pos % (1024*batch_size)
+            result = torch.tensor(self.data[self.pos:self.pos+1024*batch_size].reshape(batch_size, 1024)[:, :example_length], dtype=torch.long, device='cuda')
+            self.pos += 1024*batch_size + randrange(example_length)
+            return result
+        elif self.mode == "sequential":
+            if self.pos + batch_size*self.stride > self.n_bytes:
+                self.pos = self.pos % (batch_size*self.stride)
+            example = lambda n: self.data[n:n+example_length].view(1,-1)
+            result = np.stack([example(self.pos + idx*self.stride) for n in range(batch_size)])
+            self.pos += batch_size*self.stride
+            return torch.tensor(result, dtype=torch.long, device='cuda')
+        elif self.mode == "random":
+            example = lambda n: self.data[n:n+example_length].view(1,-1)
+            rand_pos = lambda: randrange(self.n_tokens-example_length)
+            result = np.stack([example(rand_pos()) for _ in range(batch_size)])
+            return torch.tensor(result, dtype=torch.long, device='cuda')
 
-    @staticmethod
-    def encode(char_sequence):
-        if type(char_sequence) == types.GeneratorType:
-            def stream():
-                for c in char_sequence:
-                    for b in bytes(c, encoding='utf8'):
-                        yield b
-            result = stream()
-        else:
-            result = bytes(char_sequence, encoding='utf8')
-        return result
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['data']
+        return state
 
-    @staticmethod
-    def decode(byte_sequence):
-        def is_valid_utf8_byte(b):
-            return b&0b11111000 != 0b11111000
-        def is_payload_utf8_byte(b):
-            return b&0b11000000 == 0b10000000
-        def is_header_utf8_byte(b):
-            return is_valid_utf8_byte(b) and not is_payload_utf8_byte(b)
-        def char_width(b):
-            if b&0b10000000 == 0:
-                return 1
-            elif b&0b11100000 == 0b11000000:
-                return 2
-            elif b&0b11110000 == 0b11100000:
-                return 3
-            elif b&0b11111000 == 0b11110000:
-                return 4
-            return None
-        def stream():
-            (word, width) = ([], 0)
-            for b in byte_sequence:
-                if is_header_utf8_byte(b):
-                    (word, width) = ([b], char_width(b))
-                elif is_payload_utf8_byte(b):
-                    word.append(b)
-                if len(word) == width:
-                    try:
-                        yield bytes(word).decode('utf8')
-                    except:
-                        # There are still undecodables we catch here.
-                        # e.g. bytes(map(lambda x: int(x,base=2),['0b11000000', '0b10000000'])).decode('utf8') raises UnicodeDecodeError
-                        pass
-        if type(byte_sequence) == types.GeneratorType:
-            return stream()
-        else:
-            return ''.join(list(stream()))
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.data = np.memmap(self.path, mode='r')

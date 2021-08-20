@@ -1,68 +1,38 @@
 import torch
 from torch.cuda.amp import autocast
-from ..util import TwoWindowFilter
 import numpy as np
 import copy
 import random
-from random import randrange
 from time import time
+from ..dataset.utf8 import utf8encode
+from ..dataset.utf8 import utf8decode
+from ..dataset import BytesDataset
 
 class Student:
-    def __init__(self, path=None, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None):
-        if path is not None:
-            self.load(path)
-        if model is not None:
-            self.model = model
-        if optimizer is not None:
-            self.optimizer = optimizer
-        if dataset is not None:
-            self.dataset = dataset
-        if batch_size is not None:
-            self.batch_size = batch_size
-        else:
-            self.batch_size = 1
-        if example_length is not None:
-            self.example_length = example_length
-        else:
-            self.example_length = self.model.n_ctx + 1
+    """
+    Encapsulates (model, optimizer, dataset) and other training hyperparameters and metrics.
+    * Provides methods for genetic algorithms (e.g. for hyperparameter selection)
+    * Provides an autocomplete method to test the model with
+    * Provides a backup mechanism
+    """
+    def __init__(self, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None):
+        self.model = model
+        self.optimizer = optimizer
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.example_length = example_length
+
         self.time = 0.0
         self.times = []
         self.grades = []
-        self.loss_shaping = None
-        self.baseline_model = None
-        self.baseline_grades = []
-        self.shaped_losses = []
-        self.relative_grades = []
-        self.example_losses = []
 
-    def set_baseline(self, baseline_model):
-        self.baseline_model = baseline_model
+        self.parent = None
 
-    def __del__(self):
-        del self.model
-        del self.optimizer
-
-    def clone(self):
-        return copy.deepcopy(self)
-
-    def mutate(self):
-        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
-        self.batch_size = int(r*self.batch_size)
-        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
-        lr = self.optimizer.param_groups[0]["lr"](0)
-        lr = lr*r
-        if lr == 0.0:
-            lr = 1e-6 # minimum learning rate, maybe should lower
-        self.optimizer.param_groups[0]["lr"] = lambda _: lr
-
-    def save(self, path):
-        checkpoint = {
-            "model": self.model,
-            "optimizer": self.optimizer,
-            "dataset": self.dataset,
-            "batch_size": self.batch_size,
-            "example_length": self.example_length}
-        torch.save(checkpoint, path)
+    @staticmethod
+    def load_from_path(path):
+        student = Student()
+        student.load(path)
+        return student
 
     def load(self, path):
         checkpoint = torch.load(path)
@@ -71,57 +41,145 @@ class Student:
         self.dataset = checkpoint["dataset"]
         self.batch_size = checkpoint["batch_size"]
         self.example_length = checkpoint["example_length"]
+        self.time = checkpoint["time"]
+        self.times = checkpoint["times"]
+        self.grades = checkpoint["grades"]
+        self.parent = checkpoint["parent"]
+
+    def save(self, path):
+        checkpoint = {
+            "model": self.model,
+            "optimizer": self.optimizer,
+            "dataset": self.dataset,
+            "batch_size": self.batch_size,
+            "example_length": self.example_length,
+            "time": self.time,
+            "times": self.times,
+            "grades": self.grades,
+            "parent": self.parent}
+        torch.save(checkpoint, path)
+
+    def clone(self):
+        """
+        Create a clone of `self` and return it.
+        The clone's `parent` attribute (if present)
+        will be the same reference as the original.
+        Everything else will be a deep copy.
+        """
+        tmp = self.parent
+        self.parent = None
+        clone = copy.deepcopy(self)
+        self.parent = tmp
+        clone.parent = tmp
+        return clone
+
+    def backup(self):
+        """
+        Create a clone of `self` and store it in `self.parent`.
+        Note that this has a Russian doll effect if called repeatedly,
+        with backups having older backups.
+        """
+        self.parent = self.clone()
+
+    def revert(self):
+        """
+        Revert to the state stored in `self.parent` on the previous `backup` call.
+        If no such call took place, then do nothing.
+        """
+        if self.parent is None:
+            return  # silly rabbit
+        clone = self.parent.clone()
+        self.model = clone.model
+        self.optimizer = clone.optimizer
+        self.dataset = clone.dataset
+        self.batch_size = clone.batch_size
+        self.example_length = clone.example_length
+        self.time = clone.time
+        self.times.clear()
+        self.times.extend(clone.times)
+        self.grades.clear()
+        self.grades.extend(clone.grades)
+        self.parent = clone.parent
 
     @autocast()
-    def study(self):
+    def study(self, batch):
+        """
+        Train the model a step using the supplied `batch` of examples.
+
+        ## Args
+        ### `batch`:
+        ```python
+        assert type(batch) == torch.Tensor
+        assert batch.dtype == torch.long
+        (batch_size, example_length) = batch.shape
+        assert example_length == self.model.n_ctx + 1
+        ```
+        ## Returns
+        ```python
+        None
+        ```
+        """
         def closure():
-            batch_size = self.batch_size
-            example_length = self.example_length
-            X = self.dataset.batch(batch_size=batch_size, example_length=example_length)
-            losses = self.model(X)
-            if self.baseline_model is not None:
-                with torch.no_grad():
-                    denom_losses = self.baseline_model(X)
-                    self.baseline_grades.append(1.0 - torch.mean(denom_losses).item())
-                try:
-                    shaped_losses = self.loss_shaping(losses, denom_losses)
-                except:
-                    shaped_losses = losses
-            else:
-                try:
-                    shaped_losses = self.loss_shaping(losses)
-                except:
-                    shaped_losses = losses
-            shaped_losses = torch.nan_to_num(shaped_losses, nan=0.0, posinf=0.0, neginf=0.0)
-            torch.mean(shaped_losses).backward()
-            return losses.detach().cpu().numpy(), shaped_losses.detach().cpu().numpy()
+            batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length)
+            losses = self.model(batch)
+            losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
+            torch.mean(losses).backward()
+            return losses.detach().cpu().numpy()
         start = time()
-        losses, shaped_losses = self.optimizer.step(closure)
+        losses = self.optimizer.step(closure)
         elapsed = time() - start
         self.time += elapsed
-        self.grades.append(1.0 - np.sum(losses)/self.batch_size)
-        self.example_losses.extend(losses)
         self.times.append(elapsed)
-        self.shaped_losses.append(np.sum(shaped_losses)/self.batch_size)
-        if len(self.baseline_grades) > 0:
-            self.relative_grades.append(self.grades[-1]/self.baseline_grades[-1])
+        self.grades.append(1.0 - np.mean(losses))
+
+    def mutate(self):
+        """
+        Mutate `self` by randomly altering `self.batch_size` and `self.optimizer.param_groups[0]["lr"]`
+        """
+        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
+        self.batch_size = int(r*self.batch_size)
+        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
+        lr = self.optimizer.param_groups[0]["lr"](0)
+        lr = lr*r
+        if lr == 0.0:
+            lr = 1e-6  # minimum learning rate, maybe should lower
+        self.optimizer.param_groups[0]["lr"] = lambda n: lr
 
     @torch.no_grad()
-    def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, output=None):
+    def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, dataset=None, encode=None, decode=None, output=None):
+        """
+        Autocomplete using the model
+
+        ## Args
+        ### `prompt`
+        the
+        ### `n_generate`
+        ### `n_ctx`
+        ### `dataset`
+        ### `encode`
+        ### `decode`
+        ### `output`
+        """
         Categorical = torch.distributions.Categorical
-        decode = self.dataset.decode
-        encode = self.dataset.encode
-        batch = self.dataset.batch
         if n_ctx is None:
             n_ctx = self.model.n_ctx
+        if encode is None:
+            encode = utf8encode
+        if decode is None:
+            decode = utf8decode
         if prompt is None:
-            prompt = decode(batch(1, 2*n_ctx).tolist()[0]) # kludge
+            if dataset is None:
+                dataset = BytesDataset()
+            if dataset is not None:
+                prompt = decode(dataset.batch(1, 2*n_ctx).tolist()[0])  # kludge
+            else:
+                prompt = " Every dog goes to heaven." * 128
         x = encode(prompt)
         x = x[-n_ctx:]
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
-                y = Categorical(self.model.inference(torch.tensor(x, dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
+                y = Categorical(self.model.inference(torch.tensor(x,dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
                 x = (x + [y])[-n_ctx:]
                 if output is not None:
                     output.append(y)

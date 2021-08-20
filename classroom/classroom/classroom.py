@@ -4,8 +4,7 @@ import asyncio
 
 class Classroom:
     def __init__(self):
-        self.students = []
-        self.tasks = {}
+        self.students = {}
         self.gun = None # but what if there are bears?
 
     def enroll(self, student):
@@ -24,13 +23,9 @@ class Classroom:
                 print(e)
                 raise e
             return None
-        self.students.append(student)
-        self.tasks[student] = asyncio.create_task(_train(student, self.students))
+        self.students[student] = asyncio.create_task(_train(student, self.students))
 
-    def graduate(self, idx=0):
-        if len(self.students) == 0:
-            return None # or should we raise
-        student = self.students.pop(idx)
-        self.tasks[student].cancel()
-        del self.tasks[student]
+    def graduate(self, student):
+        self.students[student].cancel()
+        del self.students[student]
         return student
