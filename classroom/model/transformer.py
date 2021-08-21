@@ -20,13 +20,15 @@ class ResidualDropoutLayerNorm(Module):
 
 
 class Mask(Module):
-    def __init__(self, mode="causal"):
+    def __init__(self, mode="none"):
         super().__init__()
         self.mode = mode
 
     def forward(self, x):
         n, device = x.shape[-1], x.device
-        if self.mode == "causal":
+        if self.mode == "none":
+            return x
+        elif self.mode == "causal":
             return x+(1-1/torch.tril(torch.ones((n,n),device=device)))
         elif self.mode == "half_causal":
             return x+(1-1/torch.cat([torch.cat([torch.ones((n//2,n//2),device=device), torch.zeros((n//2,n//2),device=device)], dim=1), torch.tril(torch.ones((n,n),device=device))[n//2:,:]], dim=0))

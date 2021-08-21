@@ -1,45 +1,44 @@
 from sortedcontainers import SortedList
-import asyncio
 
-class Filter:
-    def __init__(self, input, F):
-        self.input = input
-        self.F = F
-        self.data = []
-        self.task = asyncio.create_task(Filter.loop(self.input, self.F, self.data))
 
-    def __del__(self):
-        try:
-            self.task.cancel()
-        except:
-            pass
+class Count:
+    def __init__(self):
+        self.count = 0
 
-    def __getitem__(self, idx):
-        return self.data[idx]
+    def __call__(self, x, **kwargs):
+        self.count += 1
+        return self.count
 
-    def __len__(self):
-        return len(self.data)
 
-    def __str__(self):
-        return str(self.data)
+class Diff:
+    def __init__(self, x=None):
+        self.x = x
 
-    def __repr__(self):
-        return str(self.data)
+    def __call__(self, x, **kwargs):
+        y = self.x
+        self.x = x
+        if y is None:
+            return 0
+        else:
+            return x - y
 
-    def __iadd__(self, xs):
-        return self.data.extend(xs)
 
-    def append(self, x):
-        return self.data.append(x)
+class Sum:
+    def __init__(self):
+        self.x = 0
 
-    def extend(self, xs):
-        return self.data.extend(xs)
+    def __call__(self, x, **kwargs):
+        self.x += x
+        return self.x
 
-    @staticmethod
-    async def loop(input, F, output):
-        while True:
-            output += [F(x) for x in input[len(output):]]
-            await asyncio.sleep(.01)
+
+class Log2:
+    def __init__(self):
+        self.x = 0
+
+    def __call__(self, x, **kwargs):
+        self.x += x
+        return log(self.x)/log(2.0)
 
 
 class TwoWindowFilter:
@@ -50,7 +49,7 @@ class TwoWindowFilter:
         self.count = 0
         assert self.lag % 2 == 0
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         self.reg1[0] += x
         self.reg1[1] += 1
         self.reg2[0] += x
@@ -73,6 +72,7 @@ class TwoWindowFilter:
             t = (i-j)/j
             return t*mu1 + (1-t)*mu2
 
+
 class KalmanFilter1D:
     def __init__(self, Q=1e-4, R=1e-2, mean=0.0, variance=1.0):
         self.Q = Q
@@ -80,18 +80,20 @@ class KalmanFilter1D:
         self.mean = mean
         self.variance = variance
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         v = self.variance + self.Q
         self.variance = (self.R*v)/(self.R + v)
         self.mean += self.variance*(x-self.mean)/self.R
         return self.mean
+
 
 class MedianFilter:
     def __init__(self, memory_limit=1024):
         self.memory_limit = memory_limit
         self.bins = SortedList()
         self.step = 0
-    def __call__(self, x):
+
+    def __call__(self, x, **kwargs):
         self.bins.add((x, self.step))
         self.step += 1
         if len(self.bins) == self.memory_limit:

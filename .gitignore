@@ -1,7 +1,8 @@
+*.md
 *.srh
 # Byte-compiled / optimized / DLL files
 *.html
-examples/*.ipynb
+notes/*.ipynb
 src/*.ipynb
 minicorpus.txt
 trash
