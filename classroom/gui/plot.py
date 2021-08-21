@@ -1,11 +1,10 @@
-from bokeh.io import push_notebook, show, output_notebook
-from bokeh.plotting import figure
-output_notebook()
-from bokeh.models import HoverTool
-from bokeh.palettes import Spectral4
-import numpy as np
 import asyncio
 from collections import defaultdict
+import numpy as np
+from bokeh.io import push_notebook, show
+from bokeh.plotting import figure
+from bokeh.models import HoverTool
+from bokeh.palettes import Spectral4
 
 
 class Plot:
@@ -65,8 +64,12 @@ class Plot:
                     for name in plots:
                         t = tick[name]
                         (X,Y) = plots[name]
-                        xdata = X[t:]
-                        ydata = Y[t:]
+                        try:
+                            xdata = X[t:]
+                            ydata = Y[t:]
+                        except:
+                            xdata = X.output[t:]
+                            ydata = Y.output[t:]  # TODO: make this unnecessary
                         n = min(len(xdata), len(ydata))
                         xdata = xdata[:n]
                         ydata = ydata[:n]

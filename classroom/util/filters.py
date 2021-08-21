@@ -5,7 +5,7 @@ class Count:
     def __init__(self):
         self.count = 0
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         self.count += 1
         return self.count
 
@@ -14,7 +14,7 @@ class Diff:
     def __init__(self, x=None):
         self.x = x
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         y = self.x
         self.x = x
         if y is None:
@@ -27,7 +27,7 @@ class Sum:
     def __init__(self):
         self.x = 0
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         self.x += x
         return self.x
 
@@ -36,7 +36,7 @@ class Log2:
     def __init__(self):
         self.x = 0
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         self.x += x
         return log(self.x)/log(2.0)
 
@@ -49,7 +49,7 @@ class TwoWindowFilter:
         self.count = 0
         assert self.lag % 2 == 0
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         self.reg1[0] += x
         self.reg1[1] += 1
         self.reg2[0] += x
@@ -80,7 +80,7 @@ class KalmanFilter1D:
         self.mean = mean
         self.variance = variance
 
-    def __call__(self, x):
+    def __call__(self, x, **kwargs):
         v = self.variance + self.Q
         self.variance = (self.R*v)/(self.R + v)
         self.mean += self.variance*(x-self.mean)/self.R
@@ -92,7 +92,8 @@ class MedianFilter:
         self.memory_limit = memory_limit
         self.bins = SortedList()
         self.step = 0
-    def __call__(self, x):
+
+    def __call__(self, x, **kwargs):
         self.bins.add((x, self.step))
         self.step += 1
         if len(self.bins) == self.memory_limit:

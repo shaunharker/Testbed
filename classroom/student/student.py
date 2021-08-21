@@ -107,22 +107,10 @@ class Student:
         self.parent = clone.parent
 
     @autocast()
-    def study(self, batch):
+    def study(self):
         """
-        Train the model a step using the supplied `batch` of examples.
-
-        ## Args
-        ### `batch`:
-        ```python
-        assert type(batch) == torch.Tensor
-        assert batch.dtype == torch.long
-        (batch_size, example_length) = batch.shape
-        assert example_length == self.model.n_ctx + 1
-        ```
-        ## Returns
-        ```python
-        None
-        ```
+        Use `self.optimizer` to train `self.model` for one step using a batch obtained from `self.dataset` using `self.batch_size` and `self.example_length`.
+        Then add/append training data to `self.time`, `self.times`, and `self.grades`.
         """
         def closure():
             batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length)
@@ -136,6 +124,29 @@ class Student:
         self.time += elapsed
         self.times.append(elapsed)
         self.grades.append(1.0 - np.mean(losses))
+
+    def parameter_histograms(self):
+        """
+        Return a dictionary the keys of which are the names of parameters
+        as returned by `self.model.named_parameters()` and the values of
+        which are pairs (X, Y) which give the pdf of the distribution of
+        individual parameter values.
+        ### Example
+        ```python
+        H = student.parameter_histograms()
+        plots = [Plot(x="value",y=f"pdf",**{key: H[key]}) for key in H]
+        plots[0]
+        ```
+        """
+        pd = {name: p for (name, p) in self.model.named_parameters()}
+        H = {}
+        for (name, p) in pd.items():
+            n = torch.numel(p)
+            bins = math.floor(math.sqrt(n))
+            data = p.detach().cpu().numpy().reshape(-1)
+            Y, X = np.histogram(data, bins=int(len(data)**(1/2)), density=True)
+            H[name] = (X, Y)
+        return H
 
     def mutate(self):
         """
@@ -151,19 +162,22 @@ class Student:
         self.optimizer.param_groups[0]["lr"] = lambda n: lr
 
     @torch.no_grad()
-    def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, dataset=None, encode=None, decode=None, output=None):
+    def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, encode=None, decode=None, output=None):
         """
         Autocomplete using the model
 
         ## Args
-        ### `prompt`
-        the
-        ### `n_generate`
-        ### `n_ctx`
-        ### `dataset`
-        ### `encode`
-        ### `decode`
-        ### `output`
+        * `prompt: str` an optional prompt to begin with
+        * `n_generate: int` the number of bytes/tokens to generate
+        * `n_ctx: int` the number of bytes/tokens in the context window
+        * `encode: TODO` the function that can turn an str into a sequence of bytes/tokens suitable for the model.
+        defaults to utf8encode
+        * `decode: TODO` the function that can turn the sequences of bytes/tokens used by the model to a str
+        defaults to utf8decode
+        * `output: Optional[List[int]]` a list to stream the output bytes/tokens to (as `int`s; they will not be decoded to `str`).
+
+        ## TODO
+        * make streaming autocomplete with streamed characters (i.e. length 1 strings) using asyncio
         """
         Categorical = torch.distributions.Categorical
         if n_ctx is None:
@@ -173,12 +187,7 @@ class Student:
         if decode is None:
             decode = utf8decode
         if prompt is None:
-            if dataset is None:
-                dataset = BytesDataset()
-            if dataset is not None:
-                prompt = decode(dataset.batch(1, 2*n_ctx).tolist()[0])  # kludge
-            else:
-                prompt = " Every dog goes to heaven." * 128
+            prompt = decode(self.dataset.batch(1, 2*n_ctx).tolist()[0])  # kludge
         x = encode(prompt)
         x = x[-n_ctx:]
         def sampler(x):

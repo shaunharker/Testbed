@@ -9,10 +9,9 @@ class Fun:
         else:
             self.output = output
         self.kwargs = kwargs
-        self.task = asyncio.create_task(Fun.loop(f, args, kwargs, output))
+        self.task = asyncio.create_task(Fun.loop(f, args, kwargs, self.output))
 
     def __del__(self):
-        print("Fun: Task cancelled.")
         self.task.cancel()
 
     @staticmethod

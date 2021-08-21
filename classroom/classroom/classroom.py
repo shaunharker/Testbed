@@ -5,7 +5,6 @@ import asyncio
 class Classroom:
     def __init__(self):
         self.students = {}
-        self.gun = None # but what if there are bears?
 
     def enroll(self, student):
         async def _train(student, students):
@@ -14,7 +13,6 @@ class Classroom:
                 while True:
                     dt = lambda: max(student.time - colleague.time for colleague in students)
                     while dt() > 0.0:
-                        #print(f"{student.time}, {seat[0].time}, wait time = {wait_time}")
                         await asyncio.sleep(dt())
                     student.study()
                     if len(students) == 1:

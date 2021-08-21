@@ -31,14 +31,16 @@ class BytesDataset:
         elif self.mode == "sequential":
             if self.pos + batch_size*self.stride > self.n_bytes:
                 self.pos = self.pos % (batch_size*self.stride)
-            example = lambda n: self.data[n:n+example_length].view(1,-1)
-            result = np.stack([example(self.pos + idx*self.stride) for n in range(batch_size)])
+            example = lambda n: self.data[n:n+example_length]
+            examples = [example(self.pos + idx*self.stride) for n in range(batch_size)]
+            result = np.stack(examples)
             self.pos += batch_size*self.stride
             return torch.tensor(result, dtype=torch.long, device='cuda')
         elif self.mode == "random":
-            example = lambda n: self.data[n:n+example_length].view(1,-1)
-            rand_pos = lambda: randrange(self.n_tokens-example_length)
-            result = np.stack([example(rand_pos()) for _ in range(batch_size)])
+            example = lambda n: self.data[n:n+example_length]
+            rand_pos = lambda: randrange(self.n_bytes-example_length)
+            examples = [example(rand_pos()) for _ in range(batch_size)]
+            result = np.stack(examples)
             return torch.tensor(result, dtype=torch.long, device='cuda')
 
     def __getstate__(self):
