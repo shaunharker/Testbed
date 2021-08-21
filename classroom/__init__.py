@@ -23,18 +23,17 @@ from classroom.optimizer import Floyd
 from classroom.student import Student
 from classroom.classroom import Classroom
 
-from classroom.util import factory
+from classroom.util import Fun
+from classroom.util import Count
+from classroom.util import Sum
+from classroom.util import Diff
+from classroom.util import Log2
 from classroom.util import KalmanFilter1D
 from classroom.util import MedianFilter
 from classroom.util import TwoWindowFilter
-from classroom.util import CountFilter
-from classroom.util import SumFilter
-from classroom.util import numel
 
 from classroom.gui import Plot
 from classroom.gui import Histogram
-
-import classroom.util.live
 
 def numel(model):
     return sum(p.numel() for p in model.parameters())

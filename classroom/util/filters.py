@@ -1,6 +1,46 @@
 from sortedcontainers import SortedList
 
 
+class Count:
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self, x):
+        self.count += 1
+        return self.count
+
+
+class Diff:
+    def __init__(self, x=None):
+        self.x = x
+
+    def __call__(self, x):
+        y = self.x
+        self.x = x
+        if y is None:
+            return 0
+        else:
+            return x - y
+
+
+class Sum:
+    def __init__(self):
+        self.x = 0
+
+    def __call__(self, x):
+        self.x += x
+        return self.x
+
+
+class Log2:
+    def __init__(self):
+        self.x = 0
+
+    def __call__(self, x):
+        self.x += x
+        return log(self.x)/log(2.0)
+
+
 class TwoWindowFilter:
     def __init__(self, lag=1024):
         self.lag = lag
@@ -32,45 +72,6 @@ class TwoWindowFilter:
             t = (i-j)/j
             return t*mu1 + (1-t)*mu2
 
-class CountFilter:
-    def __init__(self):
-        self.count = 0
-
-    def __call__(self, x):
-        self.count += 1
-        return self.count
-
-class DiffFilter:
-    def __init__(self):
-        self.x = None
-
-    def __call__(self, x):
-        y = self.x
-        self.x = x
-        if y is None:
-            return 0
-        else:
-            self.x = x
-            return x - y
-
-
-class SumFilter:
-    def __init__(self):
-        self.x = 0
-
-    def __call__(self, x):
-        self.x += x
-        return self.x
-
-
-class LogSumFilter:
-    def __init__(self):
-        self.x = 0
-
-    def __call__(self, x):
-        self.x += x
-        return log(self.x)/log(2.0)
-
 
 class KalmanFilter1D:
     def __init__(self, Q=1e-4, R=1e-2, mean=0.0, variance=1.0):
@@ -84,6 +85,7 @@ class KalmanFilter1D:
         self.variance = (self.R*v)/(self.R + v)
         self.mean += self.variance*(x-self.mean)/self.R
         return self.mean
+
 
 class MedianFilter:
     def __init__(self, memory_limit=1024):

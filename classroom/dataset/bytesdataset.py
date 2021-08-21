@@ -4,6 +4,7 @@ from random import randrange
 import numpy as np
 import torch
 
+
 class BytesDataset:
     def __init__(self,
                  path=None,

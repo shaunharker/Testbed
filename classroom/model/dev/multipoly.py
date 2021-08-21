@@ -32,9 +32,7 @@ class multipoly(Function):
         for idx in range(degree):
             y.mul_(x)
             y.add_(degree*coefs[degree-idx])
-        z = torch.pow(x.view([1] + list(x.shape)),
-                      torch.arange(0, degree+1,
-                                   device=x.device).view([degree+1] + [1]*len(x.shape)))
+        z = torch.pow(x.view([1] + list(x.shape)), torch.arange(0, degree+1, device=x.device).view([degree+1] + [1]*len(x.shape)))
         #print(f"y{y.shape} z{z.shape} go{grad_output.shape}")
         return (y * grad_output, (z * grad_output.view([1] + list(grad_output.shape))).transpose(0,1))
 

@@ -16,7 +16,7 @@ class Student:
     * `save` and `load` serialize to and from disk
     * `push` and `pop` serialize to and from a stack in memory (implemented through the `self.parent` reference)
     * `clone` creates a clone which is a deepcopy except for `self.parent`, which is not a copy.
-    * `mutate` is a coarse proof-of-principle function at this point
+    * `mutate` is experimental in value at this point
     The methods `push`, `pop`, `mutate`, and `clone` may be used by genetic algorithms.
 
     """
