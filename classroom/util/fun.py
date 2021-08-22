@@ -16,6 +16,7 @@ class Fun:
 
     @staticmethod
     async def loop(f, args, kwargs, output):
+        # print(f"Fun.loop(args={args},kwargs={kwargs},output={output})")
         args_at_step = lambda n: [x[n] for x in args]
         kwargs_at_step = lambda n: {k:v[n] for (k,v) in kwargs.items()}
         closure = lambda n: f(*args_at_step(n), **kwargs_at_step(n))
