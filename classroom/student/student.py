@@ -198,14 +198,14 @@ class Student:
         """
         Mutate `self` by randomly altering `self.batch_size` and `self.optimizer.param_groups[0]["lr"]`
         """
-        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
+        r = random.choice([0.9, 0.95, 1.05, 1.1])
         self.batch_size = int(r*self.batch_size)
-        r = random.choice([0.5, 0.75, 1.0/0.75, 2.0])
-        lr = self.optimizer.param_groups[0]["lr"](0)
-        lr = lr*r
-        if lr == 0.0:
-            lr = 1e-6  # minimum learning rate, maybe should lower
-        self.optimizer.param_groups[0]["lr"] = lambda n: lr
+        for p in self.optimizer.lr:
+            lr = self.optimizer.lr[p](0)
+            lr = lr * random.choice([0.9, 0.95, 1.05, 1.1])
+            if lr == 0.0:
+                lr = 1e-8
+            self.optimizer.lr[p] = lambda n: lr * random.choice([0.9, 0.95, 1.05, 1.1])
 
     @torch.no_grad()
     def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, encode=None, decode=None, output=None):

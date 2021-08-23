@@ -61,13 +61,15 @@ class AdamW(Optimizer):
                  weight_decay=lambda n: 0.01,
                  n=0):
         super().__init__(parameters, {"lr": lr, "alpha": alpha, "beta1": beta1, "beta2": beta2, "weight_decay": weight_decay, "n": n})
-        self.lr = {}
+        self.lr = {p:lr for p in parameters}
 
     @torch.no_grad()
     def step(self, closure):
         for group in self.param_groups:
             alpha = group["alpha"]
             for p in group["params"]:
+                if p not in self.lr:
+                    self.lr[p] = group["lr"]
                 try:
                     p.grad.data *= alpha(n)
                 except:
@@ -75,7 +77,6 @@ class AdamW(Optimizer):
         with torch.enable_grad():
             result = closure()
         for group in self.param_groups:
-            lr = group["lr"]
             alpha = group["alpha"]
             beta1 = group["beta1"]
             beta2 = group["beta2"]
@@ -92,11 +93,8 @@ class AdamW(Optimizer):
             assert bias_correction2 > 0
             for p in group["params"]:
                 state = self.state[p]
-                try:
-                    lr = self.lr[p]
-                except:
-                    lr = group["lr"]
-                g = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0) # can this be done inplace? meh p.o.
+                lr = self.lr[p]
+                g = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
                 G = state['ema_grad'](g)/bias_correction1
                 g.square_()
                 g = state['ema_sqr_grad'](g)/bias_correction2
