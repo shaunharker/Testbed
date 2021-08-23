@@ -26,6 +26,7 @@ class Student:
         self.batch_size = batch_size
         self.example_length = example_length
 
+        self.step = 0
         self.time = 0.0
         self.times = []
         self.grades = []
@@ -55,6 +56,7 @@ class Student:
         self.dataset = checkpoint["dataset"]
         self.batch_size = checkpoint["batch_size"]
         self.example_length = checkpoint["example_length"]
+        self.step = checkpoint["step"]
         self.time = checkpoint["time"]
         self.times = checkpoint["times"]
         self.grades = checkpoint["grades"]
@@ -73,6 +75,7 @@ class Student:
             "dataset": self.dataset,
             "batch_size": self.batch_size,
             "example_length": self.example_length,
+            "step": self.step,
             "time": self.time,
             "times": self.times,
             "grades": self.grades,
@@ -120,6 +123,7 @@ class Student:
         self.dataset = clone.dataset
         self.batch_size = clone.batch_size
         self.example_length = clone.example_length
+        self.step = clone.step
         self.time = clone.time
         self.times.clear()
         self.times.extend(clone.times)
@@ -131,6 +135,7 @@ class Student:
         self.baseline_grades.extend(clone.baseline_grades)
         self.relative_grades.clear()
         self.relative_grades.extend(clone.relative_grades)
+        del clone
 
     @autocast()
     def study(self):
@@ -139,7 +144,7 @@ class Student:
         Add/append the resulting training data to `self.time`, `self.times`, `self.grades`, `self.baseline_grades`, and `self.relative_grades`.
         """
         def closure():
-            batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length)
+            batch = self.dataset.batch(offset=self.step*self.batch_size*self.example_length, batch_size=self.batch_size, example_length=self.example_length)
             losses = self.model(batch)
             losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
             torch.mean(losses).backward()
@@ -152,6 +157,7 @@ class Student:
         start = time()
         losses, baseline_losses = self.optimizer.step(closure)
         elapsed = time() - start
+        self.step += 1
         self.time += elapsed
         self.times.append(elapsed)
         grade = 1.0 - np.mean(losses)
@@ -227,7 +233,7 @@ class Student:
         if decode is None:
             decode = utf8decode
         if prompt is None:
-            prompt = decode(self.dataset.batch(1, 2*n_ctx).tolist()[0])  # kludge
+            prompt = decode(self.dataset.batch(self.step, 1, 2*n_ctx).tolist()[0])  # kludge
         x = encode(prompt)
         x = x[-n_ctx:]
         def sampler(x):
