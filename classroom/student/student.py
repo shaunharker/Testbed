@@ -164,7 +164,7 @@ class Student:
         self.grades.append(grade)
         if self.baseline is not None:
             baseline_grade = 1.0 - np.mean(baseline_losses)
-            relative_grade = grade/(1e-8+baseline_grade)
+            relative_grade = grade-baseline_grade
         else:
             baseline_grade = grade
             relative_grade = 1.0
