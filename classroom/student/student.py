@@ -167,7 +167,7 @@ class Student:
             relative_grade = grade-baseline_grade
         else:
             baseline_grade = grade
-            relative_grade = 1.0
+            relative_grade = 0.0
         self.baseline_grades.append(baseline_grade)
         self.relative_grades.append(relative_grade)
 
