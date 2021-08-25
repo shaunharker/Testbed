@@ -21,6 +21,7 @@ from classroom.optimizer import Sonny
 from classroom.optimizer import Floyd
 
 from classroom.student import Student
+from classroom.student import BaselineComparison # for testing
 from classroom.classroom import Classroom
 from classroom.gui import Plot
 
