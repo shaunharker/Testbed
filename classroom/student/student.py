@@ -230,6 +230,33 @@ class Student:
                 lr = 1e-8
             self.optimizer.lr[p] = lambda n: lr * random.choice([0.9, 0.95, 1.05, 1.1])
 
+    def stats(self):
+        student = self
+        n = len(student.times)-1
+        time = student.time #sum(student.times[:n])
+        mean_grade = np.mean(np.array(student.grades[n//2:n]))
+        mean_baseline_grade = np.mean(np.array(student.baseline_grades[n//2:n]))
+        mean_improvement = mean_grade - mean_baseline_grade
+        mean_predicted_grade = np.mean(np.array(student.predicted_grades[n//2:n]))
+        accuracy = 1.0 - abs(mean_predicted_grade - mean_grade)/(mean_grade)
+        message = '\n'.join([
+            f"lr                      = {student.optimizer.state['LM.F.layers.0.weight']['lr'](n)}",
+            f"batch_size              = {student.batch_size}",
+            f"example_length          = {student.example_length}",
+            f"n                       = {n}",
+            f"time                    = {int(time)}s",
+            f"steps per second        = {(n/time)}",
+            f"mean_baseline_grade     = {mean_baseline_grade}",
+            f"mean_grade              = {mean_grade}",
+            f"mean_predicted_grade    = {mean_predicted_grade}",
+            f"accuracy                = {accuracy}",
+            f"mean_improvement        = {mean_improvement}",
+            f"mean_improvement / step = {mean_improvement/n}",
+            f"est steps to grade 1.0  = {int((1-mean_grade)/(mean_improvement/n))} steps",
+            f"est time to grade 1.0   = {int((1-mean_grade)/(mean_improvement/time))} seconds",
+        ])
+        print(message)
+
     @torch.no_grad()
     def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, encode=None, decode=None, output=None):
         """

@@ -8,12 +8,12 @@ import classroom.student
 import classroom.util
 
 from classroom.dataset import BytesDataset
+from classroom.dataset import GutenbergSnippetsDataset
 from classroom.dataset import RandomTokensDataset
 from classroom.dataset import utf8encode
 from classroom.dataset import utf8decode
 
 from classroom.model import MLPLM
-from classroom.model import MLPLM2
 from classroom.model import TransformerLM
 
 from classroom.optimizer import AdamW
@@ -29,7 +29,7 @@ from classroom.util import Fun
 from classroom.util import Count
 from classroom.util import Sum
 from classroom.util import Diff
-from classroom.util import Log2
+from classroom.util import Log2Sum
 from classroom.util import KalmanFilter1D
 from classroom.util import MedianFilter
 from classroom.util import TwoWindowFilter

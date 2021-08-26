@@ -32,7 +32,7 @@ class Sum:
         return self.x
 
 
-class Log2:
+class Log2Sum:
     def __init__(self):
         self.x = 0
 
