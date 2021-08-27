@@ -3,6 +3,8 @@ import torch
 from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU, LayerNorm
 from torch.nn import Embedding as TorchEmbedding
 from torch.nn import Linear as TorchAffine
+from torch.nn import Dropout
+
 import dill
 from types import GeneratorType
 import copy
@@ -147,6 +149,101 @@ class MLPLM(Module):
                     Sequential(
                         Embedding(n_classes=n_vocab_in, d_model=d_model),
                         Lambda(lambda x: x.view(-1,n_ctx*d_model)),
+                        MLP(d_in=n_ctx*d_model,
+                            d_hidden=d_hidden,
+                            nonlinearity=nonlinearity,
+                            d_out=n_vocab_out),
+                        Lambda(lambda x: x.view(-1, 1, n_vocab_out))))))
+
+    def forward(self, x):
+        return self.language_model(x)
+
+    @torch.no_grad()
+    def inference(self, x):
+        return self.language_model.inference(x)
+
+    def clone(self):
+        return copy.deepcopy(self)
+
+
+class ResidualDropoutLayerNorm(Module):
+    def __init__(self, layer, d_model, p_dropout):
+        super().__init__()
+        self.d_model = d_model
+        self.p_dropout = p_dropout
+
+        self.layer = layer
+        self.dropout = Dropout(p_dropout)
+        self.layernorm = LayerNorm(d_model)
+
+    def forward(self, x):
+        assert x.shape[-1] == self.d_model, f"{x.shape[-1]} != {self.d_model}"
+        return self.layernorm(x+self.dropout(self.layer(x)))
+
+
+class RDLNMLP(Module):
+    def __init__(self, d_model, d_hidden, nonlinearity, p_dropout):
+        super().__init__()
+        self.d_model = d_model
+        self.d_hidden = d_hidden
+        self.nonlinearity = nonlinearity
+        self.p_dropout = p_dropout
+        self.rdln = (
+            ResidualDropoutLayerNorm(
+                Sequential(
+                    Affine(d_in=d_model, d_out=d_hidden),
+                    Nonlinearity(nonlinearity),
+                    Affine(d_in=d_hidden, d_out=d_model)),
+                d_model = d_model,
+                p_dropout = p_dropout))
+
+
+    def forward(self, x):
+        return self.rdln(x)
+
+
+class MyLayer(Module):
+    def __init__(self, d_model, d_hidden, nonlinearity, p_dropout):
+        super().__init__()
+        self.d_model = d_model
+        self.d_hidden = d_hidden
+        self.nonlinearity = nonlinearity
+        self.p_dropout = p_dropout
+        self.A = RDLNMLP(d_model, d_hidden, nonlinearity, p_dropout)
+        self.B = RDLNMLP(d_model, d_hidden, nonlinearity, p_dropout)
+        self.C = RDLNMLP(d_model, d_hidden, nonlinearity, p_dropout)
+
+    def forward(self, x):
+        return self.A(x)*self.B(x)+self.C(x)
+
+
+class MyLM(Module):
+    def __init__(self, n_ctx, n_vocab_in, d_model, n_layers, d_hidden, nonlinearity, p_dropout, n_vocab_out):
+        super().__init__()
+        self.n_ctx = n_ctx
+        self.n_vocab_in = n_vocab_in
+        self.d_model = d_model
+        self.n_layers = n_layers
+        self.d_hidden = d_hidden
+        self.nonlinearity = nonlinearity
+        self.p_dropout = p_dropout
+        self.n_vocab_out = n_vocab_out
+        self.language_model = (
+            LanguageModel(
+                n_vocab_out=n_vocab_out,
+                mode="last",
+                module=(
+                    Sequential(
+                        Embedding(n_classes=n_vocab_in, d_model=d_model),
+                        Lambda(lambda x: x.view(-1,n_ctx*d_model)),
+                        *[ResidualDropoutLayerNorm(
+                            layer=MyLayer(
+                                d_model=n_ctx*d_model,
+                                d_hidden=d_hidden,
+                                nonlinearity=nonlinearity,
+                                p_dropout=p_dropout),
+                            d_model=n_ctx*d_model,
+                            p_dropout=p_dropout) for _ in range(n_layers)],
                         MLP(d_in=n_ctx*d_model,
                             d_hidden=d_hidden,
                             nonlinearity=nonlinearity,

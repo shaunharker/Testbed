@@ -13,7 +13,7 @@ from classroom.dataset import RandomTokensDataset
 from classroom.dataset import utf8encode
 from classroom.dataset import utf8decode
 
-from classroom.model import MLPLM
+from classroom.model import MLPLM, MyLM
 from classroom.model import TransformerLM
 
 from classroom.optimizer import AdamW

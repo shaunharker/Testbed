@@ -29,7 +29,7 @@ class AdamW:
     """
     def __init__(self,
                  parameters,
-                 lr=lambda n: 0.0 if n < 1000 else 1e-5,
+                 lr=lambda n: 0.0 if n < 1000 else 1e-6,
                  beta1=lambda n: 0.9,
                  beta2=lambda n: 0.999,
                  weight_decay=lambda n: 0.01,
@@ -44,7 +44,7 @@ class AdamW:
             name: {
                 'lr': lr,
                 'G': EMAFilter(beta1, init="zeros"),
-                'G2': EMAFilter(beta2, init="ones"),
+                'G2': EMAFilter(beta2, init="zeros"),
                 'weight_decay': weight_decay,
                 'update': update,
                 }

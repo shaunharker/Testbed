@@ -39,6 +39,7 @@ class Student:
         self.predicted_grades = []
         self.alphas = []
         self.betas = []
+        self.quotient_training = False
 
     @staticmethod
     def load_from_path(path):
@@ -104,7 +105,7 @@ class Student:
         try:
             clone = copy.deepcopy(self)
         except Exception as e:
-            print('clone exception', e.what(), e)
+            print('clone exception', e)
         self.parent = tmp1
         clone.parent = tmp1
         if self.baseline is not None:
@@ -163,13 +164,18 @@ class Student:
             batch = self.dataset.batch(offset=self.step*self.batch_size*self.example_length, batch_size=self.batch_size, example_length=self.example_length)
             losses = self.model(batch)
             losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
-            torch.mean(losses).backward()
+
             if self.baseline is not None:
                 predicted_losses, baseline_losses = self.baseline.update(batch, self.step, losses)
                 baseline_losses = torch.nan_to_num(baseline_losses, nan=0.0, posinf=0.0, neginf=0.0)
+                if self.quotient_training:
+                    torch.mean(torch.clamp(losses,min=1e-3,max=.999)/torch.clamp(baseline_losses,min=1e-3,max=0.999)).backward()
+                else:
+                    torch.mean(losses).backward()
             else:
                 predicted_losses = None
                 baseline_losses = None
+                torch.mean(losses).backward()
             return losses, baseline_losses, predicted_losses
         start = time()
         losses, baseline_losses, predicted_losses = self.optimizer.step(closure)
