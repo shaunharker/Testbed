@@ -57,4 +57,4 @@ class Poly(Module):
         self.fun = poly.apply
 
     def forward(self, x):
-        return self.fun(torch.sin(x), self.coefs)
+        return self.fun(x, self.coefs)

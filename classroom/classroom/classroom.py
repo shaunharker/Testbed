@@ -9,7 +9,6 @@ class Classroom:
     def enroll(self, student):
         async def _train(student, students):
             try:
-                time = lambda: asyncio.get_event_loop().time()
                 while True:
                     dt = lambda: max(student.time - colleague.time for colleague in students)
                     while dt() > 0.0:
@@ -18,7 +17,9 @@ class Classroom:
                     if len(students) == 1:
                         await asyncio.sleep(1e-4)
             except Exception as e:
-                print(e)
+                print(f'classroom: exception in _train:')
+                print(f'classroom:     e       = {e}')
+                print(f'classroom:     type(e) = {type(e)}')
                 raise e
             return None
         self.students[student] = asyncio.create_task(_train(student, self.students))
