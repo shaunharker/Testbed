@@ -66,10 +66,12 @@ class Plot:
                         (X,Y) = plots[name]
                         try:
                             xdata = X[t:]
-                            ydata = Y[t:]
                         except:
                             xdata = X.output[t:]
-                            ydata = Y.output[t:]  # TODO: make this unnecessary
+                        try:
+                            ydata = Y[t:]
+                        except:
+                            ydata = Y.output[t:]
                         n = min(len(xdata), len(ydata))
                         xdata = xdata[:n]
                         ydata = ydata[:n]
