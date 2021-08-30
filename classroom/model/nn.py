@@ -1,13 +1,13 @@
 import math
+import dill
+from types import GeneratorType
+import copy
 import torch
+from torch.cuda.amp import autocast
 from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU, LayerNorm
 from torch.nn import Embedding as TorchEmbedding
 from torch.nn import Linear as TorchAffine
 from torch.nn import Dropout
-
-import dill
-from types import GeneratorType
-import copy
 
 
 class SplitExample(Module):
@@ -155,6 +155,7 @@ class MLPLM(Module):
                             d_out=n_vocab_out),
                         Lambda(lambda x: x.view(-1, 1, n_vocab_out))))))
 
+    @autocast()
     def forward(self, x):
         return self.language_model(x)
 
@@ -250,6 +251,7 @@ class MyLM(Module):
                             d_out=n_vocab_out),
                         Lambda(lambda x: x.view(-1, 1, n_vocab_out))))))
 
+    @autocast()
     def forward(self, x):
         return self.language_model(x)
 

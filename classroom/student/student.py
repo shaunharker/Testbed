@@ -1,5 +1,4 @@
 import torch
-from torch.cuda.amp import autocast
 import numpy as np
 import copy
 import random
@@ -146,7 +145,6 @@ class Student:
         self.predicted_grades.extend(clone.predicted_grades)
         del clone
 
-    @autocast()
     def study(self):
         """
         Use `self.optimizer` to train `self.model` for one step using a batch obtained from `self.dataset` using training hyperparameters `self.batch_size` and `self.example_length`.
