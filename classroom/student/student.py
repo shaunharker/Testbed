@@ -249,6 +249,9 @@ class Student:
         ])
         print(message)
 
+    def bpc(self, lag=1024):
+        return sum(8*(1.0 - grade) for grade in self.grades[-lag:])/lag
+
     @torch.no_grad()
     def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, temp=1.0, encode=None, decode=None, output=None):
         """
