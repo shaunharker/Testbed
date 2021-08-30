@@ -19,7 +19,7 @@ class GutenbergSnippetsDataset:
         offset = offset or randrange(self.n_bytes)
         batch_offset = offset%(self.n_bytes//sz)
         example_offset = (offset//(self.n_bytes//sz))%(1024-example_length)
-        return torch.tensor(self.data[1024*batch_offset:1024*batch_offset+sz].reshape(batch_size, 1024)[:,example_offset:example_offset+example_length], dtype=torch.long, device=self.device)
+        return torch.tensor(self.data[sz*batch_offset:sz*batch_offset+sz].reshape(batch_size, 1024)[:,example_offset:example_offset+example_length], dtype=torch.long, device=self.device)
 
     def __getstate__(self):
         state = self.__dict__.copy()
