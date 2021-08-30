@@ -9,16 +9,17 @@ user = os.environ["USER"]
 
 
 class GutenbergSnippetsDataset:
-    def __init__(self, path=None):
+    def __init__(self, path=None, device='cuda'):
         self.path = path or f"/home/{user}/data/gutenberg.1024.utf8"
+        self.device = device
         self._load()
 
-    def batch(self, offset, batch_size, example_length):
+    def batch(self, batch_size, example_length, offset = None):
         sz = batch_size*1024
-        offset = randrange(self.n_bytes)
+        offset = offset or randrange(self.n_bytes)
         batch_offset = offset%(self.n_bytes//sz)
         example_offset = (offset//(self.n_bytes//sz))%(1024-example_length)
-        return torch.tensor(self.data[1024*batch_offset:1024*batch_offset+sz].reshape(batch_size, 1024)[:,example_offset:example_offset+example_length], dtype=torch.long, device='cuda')
+        return torch.tensor(self.data[1024*batch_offset:1024*batch_offset+sz].reshape(batch_size, 1024)[:,example_offset:example_offset+example_length], dtype=torch.long, device=self.device)
 
     def __getstate__(self):
         state = self.__dict__.copy()

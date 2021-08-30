@@ -84,7 +84,7 @@ class CrossEntropyLoss(Module):
         self.crossentropyloss = torch.nn.CrossEntropyLoss(reduction='none')
 
     def forward(self, x, y):
-        return self.crossentropyloss(x.reshape(-1,self.n_classes), y.reshape(-1)).view(x.shape[:-1])/math.log(self.n_classes)
+        return self.crossentropyloss(x.reshape(-1,self.n_classes), y.reshape(-1)).view(x.shape[:-1])/math.log(2)
 
 
 class Softmax(Module):
@@ -125,7 +125,7 @@ class LanguageModel(Module):
     def forward(self, xy):
         (x, y) = self.split_example(xy)
         x = self.module(x)
-        return self.crossentropyloss(x, y)/x.shape[-2]
+        return self.crossentropyloss(x, y)
 
     @torch.no_grad()
     def inference(self, x):

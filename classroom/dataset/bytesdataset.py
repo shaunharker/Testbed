@@ -6,14 +6,15 @@ import torch
 
 
 class BytesDataset:
-    def __init__(self, path=None):
+    def __init__(self, path=None, device='cuda'):
         self.path = path
+        self.device = device
         self._load()
 
     def batch(self, offset, batch_size, example_length):
         sz = batch_size*example_length
         idx = offset%(self.n_bytes-sz)
-        return torch.tensor(self.data[idx:idx+sz], dtype=torch.long, device='cuda').view(batch_size, example_length)
+        return torch.tensor(self.data[idx:idx+sz], dtype=torch.long, device=self.device).view(batch_size, example_length)
 
     def __getstate__(self):
         state = self.__dict__.copy()

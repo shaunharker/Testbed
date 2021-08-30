@@ -37,9 +37,9 @@ class Student:
         self.baseline = None
         self.baseline_grades = []
         self.predicted_grades = []
-        self.alphas = []
-        self.betas = []
         self.quotient_training = False
+
+        self.device = 'cuda'
 
     @staticmethod
     def load_from_path(path):
@@ -68,8 +68,6 @@ class Student:
         self.baseline = checkpoint.get("baseline", None)
         self.baseline_grades = checkpoint.get("baseline_grades", [])
         self.predicted_grades = checkpoint.get("predicted_grades", [])
-        self.alphas = checkpoint.get("alphas", [])
-        self.betas = checkpoint.get("betas", [])
 
     def save(self, path):
         """
@@ -88,9 +86,7 @@ class Student:
             "parent": self.parent,
             "baseline": self.baseline,
             "baseline_grades": self.baseline_grades,
-            "predicted_grades": self.predicted_grades,
-            "alphas": self.alphas,
-            "betas": self.betas}
+            "predicted_grades": self.predicted_grades}
         torch.save(checkpoint, path)
 
     def clone(self):
@@ -148,10 +144,6 @@ class Student:
         self.baseline_grades.extend(clone.baseline_grades)
         self.predicted_grades.clear()
         self.predicted_grades.extend(clone.predicted_grades)
-        self.alphas.clear()
-        self.alphas.extend(clone.alphas)
-        self.betas.clear()
-        self.betas.extend(clone.betas)
         del clone
 
     @autocast()
@@ -161,7 +153,7 @@ class Student:
         Add/append the resulting training data to `self.time`, `self.times`, `self.grades`, `self.baseline_grades`, and `self.predicted_grades`.
         """
         def closure():
-            batch = self.dataset.batch(offset=self.step*self.batch_size*self.example_length, batch_size=self.batch_size, example_length=self.example_length)
+            batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length, offset=None)
             losses = self.model(batch)
             losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -188,17 +180,11 @@ class Student:
         if self.baseline is not None:
             baseline_grade = 1.0 - np.mean(baseline_losses.detach().cpu().numpy())
             predicted_grade = 1.0 - np.mean(predicted_losses.detach().cpu().numpy())
-            alpha = self.baseline.a
-            beta = self.baseline.b
         else:
             baseline_grade = grade
             predicted_grade = 0.0
-            alpha = 0.0
-            beta = 0.0
         self.baseline_grades.append(baseline_grade)
         self.predicted_grades.append(predicted_grade)
-        self.alphas.append(alpha)
-        self.betas.append(beta)
 
     def parameter_histograms(self):
         """
@@ -264,7 +250,7 @@ class Student:
         print(message)
 
     @torch.no_grad()
-    def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, encode=None, decode=None, output=None):
+    def autocomplete(self, prompt=None, n_generate=128, n_ctx=None, temp=1.0, encode=None, decode=None, output=None):
         """
         Autocomplete using the model
 
@@ -289,13 +275,18 @@ class Student:
         if decode is None:
             decode = utf8decode
         if prompt is None:
-            prompt = decode(self.dataset.batch(self.step, 1, 2*n_ctx).tolist()[0])  # kludge
+            prompt = decode(self.dataset.batch(1, 2*n_ctx, offset=None).tolist()[0])  # kludge
+        print(f"=== Prompt ===\n{prompt}\n=== Autocompletion ===\n")
         x = encode(prompt)
         x = x[-n_ctx:]
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
-                y = Categorical(self.model.inference(torch.tensor(x,dtype=torch.long,device='cuda').unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]).sample().item()
+                probs = self.model.inference(torch.tensor(x, dtype=torch.long, device=self.device).unsqueeze(0)).view(-1)[-self.model.n_vocab_out:]
+                if temp > 0:
+                    y = Categorical(probs=probs**(1.0/temp)).sample().item()
+                else:
+                    y = torch.argmax(probs).item()
                 x = (x + [y])[-n_ctx:]
                 if output is not None:
                     output.append(y)
