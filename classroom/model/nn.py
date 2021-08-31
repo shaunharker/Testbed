@@ -15,7 +15,6 @@ class SplitExample(Module):
         super().__init__()
         self.mode = mode
 
-    @autocast()
     def forward(self, xy):
         if self.mode == "last":
             return (xy[...,:-1].contiguous(), xy[...,-1].contiguous())
@@ -37,7 +36,6 @@ class Sequential(Module):
         layers = sum([list(layer) if type(layer)==GeneratorType else [layer] for layer in layers],[])
         self.layers = ModuleList(layers)
 
-    @autocast()
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
@@ -49,7 +47,6 @@ class Lambda(Module):
         super().__init__()
         self.F = F
 
-    @autocast()
     def forward(self, x):
         return self.F(x)
 
@@ -76,7 +73,6 @@ class Nonlinearity(Module):
         self.nonlinearity = nonlinearity
         self.f = {"sigmoid": Sigmoid(), "ReLU": ReLU(), "GELU": GELU()}[nonlinearity]
 
-    @autocast()
     def forward(self, x):
         return self.f(x)
 
@@ -87,7 +83,6 @@ class CrossEntropyLoss(Module):
         self.n_classes = n_classes
         self.crossentropyloss = torch.nn.CrossEntropyLoss(reduction='none')
 
-    @autocast()
     def forward(self, x, y):
         return self.crossentropyloss(x.reshape(-1,self.n_classes), y.reshape(-1)).view(x.shape[:-1])/math.log(self.n_classes)
 
@@ -97,7 +92,6 @@ class Softmax(Module):
         super().__init__()
         self.softmax = torch.nn.Softmax(dim=-1)
 
-    @autocast()
     def forward(self, x):
         return self.softmax(x)
 
@@ -114,7 +108,6 @@ class MLP(Module):
             Nonlinearity(nonlinearity),
             Affine(d_in=d_hidden, d_out=d_out))
 
-    @autocast()
     def forward(self, x):
         return self.sequential(x)
 
@@ -129,7 +122,6 @@ class LanguageModel(Module):
         self.crossentropyloss = CrossEntropyLoss(n_vocab_out)
         self.softmax = Softmax()
 
-    @autocast()
     def forward(self, xy):
         (x, y) = self.split_example(xy)
         x = self.module(x)
@@ -141,7 +133,7 @@ class LanguageModel(Module):
 
 
 class MLPLM(Module):
-    def __init__(self, n_ctx, n_vocab_in, d_model, d_hidden, nonlinearity, n_vocab_out):
+    def __init__(self, n_ctx, n_vocab_in, d_model, d_hidden, nonlinearity, n_vocab_out, autocast_enabled=None):
         super().__init__()
         self.n_ctx = n_ctx
         self.n_vocab_in = n_vocab_in
@@ -149,6 +141,7 @@ class MLPLM(Module):
         self.d_hidden = d_hidden
         self.nonlinearity = nonlinearity
         self.n_vocab_out = n_vocab_out
+        self.autocast_enabled = autocast_enabled or False
         self.language_model = (
             LanguageModel(
                 n_vocab_out=n_vocab_out,
@@ -163,9 +156,9 @@ class MLPLM(Module):
                             d_out=n_vocab_out),
                         Lambda(lambda x: x.view(-1, 1, n_vocab_out))))))
 
-    @autocast()
     def forward(self, x):
-        return self.language_model(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model(x)
 
     @torch.no_grad()
     def inference(self, x):
@@ -185,7 +178,6 @@ class ResidualDropoutLayerNorm(Module):
         self.dropout = Dropout(p_dropout)
         self.layernorm = LayerNorm(d_model)
 
-    @autocast()
     def forward(self, x):
         assert x.shape[-1] == self.d_model, f"{x.shape[-1]} != {self.d_model}"
         return self.layernorm(x+self.dropout(self.layer(x)))
@@ -207,7 +199,6 @@ class RDLNMLP(Module):
                 d_model = d_model,
                 p_dropout = p_dropout))
 
-    @autocast()
     def forward(self, x):
         return self.rdln(x)
 
@@ -223,13 +214,12 @@ class MyLayer(Module):
         self.B = RDLNMLP(d_model, d_hidden, nonlinearity, p_dropout)
         self.C = RDLNMLP(d_model, d_hidden, nonlinearity, p_dropout)
 
-    @autocast()
     def forward(self, x):
         return self.A(x)*self.B(x)+self.C(x)
 
 
 class MyLM(Module):
-    def __init__(self, n_ctx, n_vocab_in, d_model, n_layers, d_hidden, nonlinearity, p_dropout, n_vocab_out):
+    def __init__(self, n_ctx, n_vocab_in, d_model, n_layers, d_hidden, nonlinearity, p_dropout, n_vocab_out, autocast_enabled=None):
         super().__init__()
         self.n_ctx = n_ctx
         self.n_vocab_in = n_vocab_in
@@ -239,6 +229,7 @@ class MyLM(Module):
         self.nonlinearity = nonlinearity
         self.p_dropout = p_dropout
         self.n_vocab_out = n_vocab_out
+        self.autocast_enabled = autocast_enabled or False
         self.language_model = (
             LanguageModel(
                 n_vocab_out=n_vocab_out,
@@ -261,9 +252,9 @@ class MyLM(Module):
                             d_out=n_vocab_out),
                         Lambda(lambda x: x.view(-1, 1, n_vocab_out))))))
 
-    @autocast()
     def forward(self, x):
-        return self.language_model(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model(x)
 
     @torch.no_grad()
     def inference(self, x):
@@ -290,7 +281,6 @@ class Fastformer(Module):
                 mode="last",
                 module=(None)))  # TODO
 
-    @autocast()
     def forward(self, x):
         return self.language_model(x)
 
