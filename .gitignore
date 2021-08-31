@@ -2,6 +2,7 @@
 *.srh
 # Byte-compiled / optimized / DLL files
 *.html
+labs
 notes/*.ipynb
 src/*.ipynb
 minicorpus.txt
