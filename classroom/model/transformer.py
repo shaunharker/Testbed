@@ -75,7 +75,7 @@ class PositionalEncoding(Module):
     def forward(self, x):
         n_ctx = x.shape[-2]
         assert n_ctx <= self.n_ctx
-        return x + self.weight[-n_ctx:]
+        return x + self.weight[:n_ctx]
 
 
 class TransformerLM(Module):
@@ -94,7 +94,26 @@ class TransformerLM(Module):
         self.p_dropout_attn_mat = p_dropout_attn_mat
         self.p_dropout_attn_out = p_dropout_attn_out
         self.p_dropout_mlp = p_dropout_mlp
-        self.F = LanguageModel(Sequential(Embedding(n_vocab_in, d_model), Dropout(p_dropout_embedding), PositionalEncoding(n_ctx, d_model), Sequential(TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp) for _ in range(n_layers)), Linear(d_model, n_vocab_out)), n_vocab_out=n_vocab_out, mode="shift")
+        self.language_model = (
+            LanguageModel(
+                n_vocab_out=n_vocab_out,
+                mode="shift",
+                module=
+                    Sequential(
+                        Embedding(n_vocab_in, d_model),
+                        Dropout(p_dropout_embedding),
+                        PositionalEncoding(n_ctx, d_model),
+                        Sequential(
+                            TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp) for _ in range(n_layers)),
+                        Linear(d_model, n_vocab_out))))
 
     def forward(self, x):
-        return self.F(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model(x)
+
+    @torch.no_grad()
+    def inference(self, x):
+        return self.language_model.inference(x)
+
+    def clone(self):
+        return copy.deepcopy(self)

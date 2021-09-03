@@ -15,7 +15,6 @@ class Student:
     Writes lists for plotting performance and other experimental data.
     ### Notes:
     * `save` and `load` serialize to and from disk
-    * `push` and `pop` serialize to and from an N-deep stack (implemented through the `self.parent` reference) where N is set to 1 and cannot be changed (i.e. two `push`s in a row loses the first `push`)
     * `clone` creates a clone which is a deepcopy except for `self.parent`, which is not a copy.
     * `mutate` mutates the student by altering `self.batch_size` by a randomly chosen factor and similiary altering optimizer learning rates.
     """
@@ -36,8 +35,7 @@ class Student:
         self.baseline = None
         self.baseline_grades = []
         self.predicted_grades = []
-        self.quotient_training = False
-
+        self.shaping = torch.mean
         self.device = 'cuda'
 
     @staticmethod
@@ -117,44 +115,6 @@ class Student:
                 p.data = q.detach().clone()
         self.time_of_last_baseline = self.time
 
-    def push(self):
-        """
-        Remove the current `self.parent` reference from `self`.
-        Create a clone of `self` and store it in `self.parent`.
-        Set the baseline model to the new parent's model.
-        """
-        self.parent = None  # until we figure out the memory situation of actually making a stack of these
-        self.parent = self.clone()
-        self.baseline = BaselineComparison(self.parent.model)
-        self.time_of_last_baseline = self.time
-
-    def pop(self):
-        """
-        Revert to the state stored in `self.parent` on the previous `backup` call.
-        If no such call took place, then do nothing.
-        """
-        if self.parent is None:
-            return
-        clone = self.parent.clone()
-        self.model = clone.model
-        self.optimizer = clone.optimizer
-        self.dataset = clone.dataset
-        self.batch_size = clone.batch_size
-        self.example_length = clone.example_length
-        self.step = clone.step
-        self.time = clone.time
-        self.times.clear()
-        self.times.extend(clone.times)
-        self.grades.clear()
-        self.grades.extend(clone.grades)
-        self.parent = clone.parent
-        self.baseline = clone.baseline
-        self.baseline_grades.clear()
-        self.baseline_grades.extend(clone.baseline_grades)
-        self.predicted_grades.clear()
-        self.predicted_grades.extend(clone.predicted_grades)
-        del clone
-
     def study(self):
         """
         Use `self.optimizer` to train `self.model` for one step using a batch obtained from `self.dataset` using training hyperparameters `self.batch_size` and `self.example_length`.
@@ -164,18 +124,13 @@ class Student:
             batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length, offset=None)
             losses = self.model(batch)
             losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
-
+            self.shaping(losses).backward()
             if self.baseline is not None:
                 predicted_losses, baseline_losses = self.baseline.update(batch, self.step, losses)
                 baseline_losses = torch.nan_to_num(baseline_losses, nan=0.0, posinf=0.0, neginf=0.0)
-                if self.quotient_training:
-                    torch.mean(torch.clamp(losses,min=1e-3,max=.999)/torch.clamp(baseline_losses,min=1e-3,max=0.999)).backward()
-                else:
-                    torch.mean(losses).backward()
             else:
                 predicted_losses = None
                 baseline_losses = None
-                torch.mean(losses).backward()
             return losses, baseline_losses, predicted_losses
         start = time()
         losses, baseline_losses, predicted_losses = self.optimizer.step(closure)
@@ -183,11 +138,11 @@ class Student:
         self.step += 1
         self.time += elapsed
         self.times.append(elapsed)
-        grade = 1.0 - np.mean(losses.detach().cpu().numpy())
+        grade = 1.0 - torch.mean(losses.detach()).item()
         self.grades.append(grade)
         if self.baseline is not None:
-            baseline_grade = 1.0 - np.mean(baseline_losses.detach().cpu().numpy())
-            predicted_grade = 1.0 - np.mean(predicted_losses.detach().cpu().numpy())
+            baseline_grade = 1.0 - torch.mean(baseline_losses.detach()).item()
+            predicted_grade = 1.0 - torch.mean(predicted_losses.detach()).item()
         else:
             baseline_grade = grade
             predicted_grade = 0.0
