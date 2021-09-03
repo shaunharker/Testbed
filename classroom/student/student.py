@@ -114,7 +114,7 @@ class Student:
             self.baseline = BaselineComparison(cloned_model)
         else:
             for (p, q) in zip(self.baseline.baseline_model.parameters(), self.model.parameters()):
-                p.data = q.data
+                p.data = q.detach().clone()
         self.time_of_last_baseline = self.time
 
     def push(self):
