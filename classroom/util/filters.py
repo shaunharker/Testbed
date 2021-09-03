@@ -34,7 +34,7 @@ class Sum:
 
 class Log2Sum:
     def __init__(self):
-        self.x = 0
+        self.x = 1.0
 
     def __call__(self, x, **kwargs):
         self.x += x
