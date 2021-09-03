@@ -108,6 +108,15 @@ class Student:
             clone.baseline.baseline_model = tmp2
         return clone
 
+    def reset_baseline(self):
+        if self.baseline is None:
+            cloned_model = copy.deepcopy(self.model)
+            self.baseline = BaselineComparison(cloned_model)
+        else:
+            for (p, q) in zip(self.baseline.baseline_model.parameters(), self.model.parameters()):
+                p.data = q.data
+        self.time_of_last_baseline = self.time
+
     def push(self):
         """
         Remove the current `self.parent` reference from `self`.
@@ -117,6 +126,7 @@ class Student:
         self.parent = None  # until we figure out the memory situation of actually making a stack of these
         self.parent = self.clone()
         self.baseline = BaselineComparison(self.parent.model)
+        self.time_of_last_baseline = self.time
 
     def pop(self):
         """
