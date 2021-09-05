@@ -242,9 +242,11 @@ class Student:
             decode = utf8decode
         if prompt is None:
             prompt = decode(self.dataset.batch(1, 2*n_ctx, offset=None).tolist()[0])  # kludge
-        print(f"=== Prompt ===\n{prompt}\n=== Autocompletion ===\n")
         x = encode(prompt)
         x = x[-n_ctx:]
+        prompt = decode(x)
+        print(f"=== Prompt ===\n{prompt}\n=== Autocompletion ===\n")
+
         def sampler(x):
             x = list(x)
             for _ in range(n_generate):
