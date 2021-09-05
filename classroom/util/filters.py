@@ -1,5 +1,5 @@
 from sortedcontainers import SortedList
-
+from math import log
 
 class Count:
     def __init__(self):

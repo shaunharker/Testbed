@@ -1,6 +1,7 @@
 import math
 import torch
 from torch.nn import Module, Linear, Dropout, LayerNorm
+from torch.cuda.amp import autocast
 from .nn import Sequential, Embedding, MLP, LanguageModel, ResidualDropoutLayerNorm
 
 
@@ -79,7 +80,21 @@ class PositionalEncoding(Module):
 
 
 class TransformerLM(Module):
-    def __init__(self, n_vocab_in, n_vocab_out, n_ctx, d_model, d_k, d_v, n_heads, d_hidden, n_layers, p_dropout_embedding, p_dropout_attn_mat, p_dropout_attn_out, p_dropout_mlp):
+    def __init__(self,
+                 n_vocab_in,
+                 n_vocab_out,
+                 n_ctx,
+                 d_model,
+                 d_k,
+                 d_v,
+                 n_heads,
+                 d_hidden,
+                 n_layers,
+                 p_dropout_embedding,
+                 p_dropout_attn_mat,
+                 p_dropout_attn_out,
+                 p_dropout_mlp,
+                 autocast_enabled=None):
         super().__init__()
         self.n_vocab_in = n_vocab_in
         self.n_vocab_out = n_vocab_out
@@ -94,6 +109,7 @@ class TransformerLM(Module):
         self.p_dropout_attn_mat = p_dropout_attn_mat
         self.p_dropout_attn_out = p_dropout_attn_out
         self.p_dropout_mlp = p_dropout_mlp
+        self.autocast_enabled = autocast_enabled or False
         self.language_model = (
             LanguageModel(
                 n_vocab_out=n_vocab_out,
