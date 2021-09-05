@@ -129,7 +129,8 @@ class TransformerLM(Module):
 
     @torch.no_grad()
     def inference(self, x):
-        return self.language_model.inference(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model.inference(x)
 
     def clone(self):
         return copy.deepcopy(self)

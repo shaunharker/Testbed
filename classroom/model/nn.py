@@ -162,7 +162,8 @@ class MLPLM(Module):
 
     @torch.no_grad()
     def inference(self, x):
-        return self.language_model.inference(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model.inference(x)
 
     def clone(self):
         return copy.deepcopy(self)
@@ -258,7 +259,8 @@ class MyLM(Module):
 
     @torch.no_grad()
     def inference(self, x):
-        return self.language_model.inference(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model.inference(x)
 
     def clone(self):
         return copy.deepcopy(self)
@@ -282,11 +284,13 @@ class Fastformer(Module):
                 module=(None)))  # TODO
 
     def forward(self, x):
-        return self.language_model(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model(x)
 
     @torch.no_grad()
     def inference(self, x):
-        return self.language_model.inference(x)
+        with autocast(enabled=self.autocast_enabled):
+            return self.language_model.inference(x)
 
     def clone(self):
         return copy.deepcopy(self)
