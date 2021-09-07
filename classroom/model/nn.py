@@ -100,16 +100,21 @@ class MLP(Module):
     def __init__(self, d_in, d_hidden, nonlinearity, d_out):
         super().__init__()
         self.d_in = d_in
-        self.d_hidden = d_hidden
+        self.d_hidden = d_hidden if type(d_hidden) == list else [d_hidden]
         self.d_out = d_out
         self.nonlinearity = nonlinearity
-        self.sequential = Sequential(
-            Affine(d_in=d_in, d_out=d_hidden),
+        self.module = Sequential(
+            Affine(d_in=d_in, d_out=self.d_hidden[0]),
+            Sequential(
+                Sequential(
+                    Nonlinearity(nonlinearity),
+                    Affine(d_in=a, d_out=b))
+                for (a,b) in zip(self.d_hidden[:-1], self.d_hidden[1:])),
             Nonlinearity(nonlinearity),
-            Affine(d_in=d_hidden, d_out=d_out))
+            Affine(d_in=self.d_hidden[-1], d_out=d_out))
 
     def forward(self, x):
-        return self.sequential(x)
+        return self.module(x)
 
 
 class LanguageModel(Module):
@@ -264,6 +269,89 @@ class MyLM(Module):
 
     def clone(self):
         return copy.deepcopy(self)
+
+
+class Mask(Module):
+    def __init__(self, mode="none"):
+        super().__init__()
+        self.mode = mode
+
+    def forward(self, x):
+        n, device = x.shape[-1], x.device
+        if self.mode == "none":
+            return x
+        elif self.mode == "causal":
+            return x+(1-1/torch.tril(torch.ones((n,n),device=device)))
+        elif self.mode == "half_causal":
+            return x+(1-1/torch.cat([torch.cat([torch.ones((n//2,n//2),device=device), torch.zeros((n//2,n//2),device=device)], dim=1), torch.tril(torch.ones((n,n),device=device))[n//2:,:]], dim=0))
+
+
+class Attn(Module):
+    def __init__(self, d_model, d_k, d_v, n_heads, p_dropout):
+        super().__init__()
+        self.d_model = d_model
+        self.d_k = d_k
+        self.d_v = d_v
+        self.n_heads = n_heads
+        self.p_dropout = p_dropout
+
+        self.query_proj = Linear(d_model, d_k*n_heads)
+        self.key_proj = Linear(d_model, d_k*n_heads)
+        self.value_proj = Linear(d_model, d_v*n_heads)
+        self.mask = Mask(mode="causal")
+        self.dropout = Dropout(p_dropout)
+        self.softmax = torch.nn.Softmax(dim=-1)
+        self.linear = Linear(d_v*n_heads, d_model, bias=False)
+
+    def forward(self, x):
+        (n_ctx, d_model) = x.shape[-2:]
+        assert d_model == self.d_model, f"{d_model} != {self.d_model}"
+        split_heads = lambda x: x.view(x.shape[:-1]+(self.n_heads,-1)).transpose(-2,-3).contiguous()
+        merge_heads = lambda x: x.transpose(-2,-3).contiguous().view(x.shape[:-3]+(n_ctx,self.d_v*self.n_heads))
+        (Q, K, V) = map(split_heads,(self.query_proj(x),self.key_proj(x),self.value_proj(x)))
+        QKT = torch.matmul(Q/math.sqrt(self.d_k),K.transpose(-1,-2))
+        return self.linear(merge_heads(self.dropout(self.softmax(self.mask(QKT)))@V))
+
+
+class FastformerAttn(Module):
+    def __init__(self, d_model, d_k, d_v, n_heads, p_dropout):
+        super().__init__()
+        self.d_model = d_model
+        self.d_k = d_k
+        self.d_v = d_v
+        self.n_heads = n_heads
+        self.p_dropout = p_dropout
+
+        self.query_proj = Linear(d_model, d_k*n_heads)
+        self.key_proj = Linear(d_model, d_k*n_heads)
+        self.value_proj = Linear(d_model, d_v*n_heads)
+        self.mask = Mask(mode="causal")
+        self.dropout = Dropout(p_dropout)
+        self.softmax = torch.nn.Softmax(dim=-1)
+        self.linear = Linear(d_v*n_heads, d_model, bias=False)
+
+    def forward(self, x):
+        (n_ctx, d_model) = x.shape[-2:]
+        assert d_model == self.d_model, f"{d_model} != {self.d_model}"
+        split_heads = lambda x: x.view(x.shape[:-1]+(self.n_heads,-1)).transpose(-2,-3).contiguous()
+        merge_heads = lambda x: x.transpose(-2,-3).contiguous().view(x.shape[:-3]+(n_ctx,self.d_v*self.n_heads))
+        (Q, K, V) = map(split_heads,(self.query_proj(x),self.key_proj(x),self.value_proj(x)))
+        QKT = torch.matmul(Q/math.sqrt(self.d_k),K.transpose(-1,-2))
+        return self.linear(merge_heads(self.dropout(self.softmax(self.mask(QKT)))@V))
+
+
+class FastformerLayer(Module):
+    def __init__(self, d_model, d_k, d_v, n_heads, d_hidden):
+        super().__init__()
+        self.d_model = d_model
+        self.d_k = d_k
+        self.d_v = d_v
+        self.n_heads = n_heads
+        self.d_hidden = d_hidden
+
+
+    def forward(self, x):
+        return self.mlp(self.attn(x))
 
 
 class Fastformer(Module):
