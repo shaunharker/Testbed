@@ -15,6 +15,7 @@ from classroom.dataset import utf8decode
 
 from classroom.model import MLPLM, MyLM
 from classroom.model import TransformerLM
+from classroom.model import ngrams
 
 from classroom.optimizer import AdamW
 from classroom.optimizer import Sonny

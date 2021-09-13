@@ -5,7 +5,6 @@ from math import log
 from time import time
 import numpy as np
 from collections import defaultdict
-from classroom import GutenbergSnippetsDataset as Dataset
 import numba
 from numba import njit, guvectorize, int64
 import numpy as np
@@ -92,7 +91,7 @@ B = torch.randint(low=0, high=p,size=[256], dtype=torch.long, device='cuda')
 C = torch.randint(low=0, high=p,size=[256], dtype=torch.long, device='cuda')
 D = torch.tensor([(((B[idx].item()*C[idx].item())%p+1)*modinv(A[idx].item(), p))%p
                   for idx in range(256)], dtype=torch.long, device='cuda')
-torch.maual_seed(seed)  # todo: use a context manager for this sort of thing
+torch.manual_seed(seed)  # todo: use a context manager for this sort of thing
 
 def ngram_count_generator(n=8, n_shards=4):
     for shard_idx in range(n_shards):
