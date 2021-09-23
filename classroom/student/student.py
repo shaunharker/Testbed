@@ -35,7 +35,7 @@ class Student:
         self.baseline = None
         self.baseline_grades = []
         self.predicted_grades = []
-        self.shaping = torch.mean
+        self.shaping = lambda batch, losses: torch.mean(losses)
         self.device = 'cuda'
 
     @staticmethod
@@ -124,7 +124,8 @@ class Student:
             batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length, offset=None)
             losses = self.model(batch)
             losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
-            self.shaping(losses).backward()
+            shaped_loss = self.shaping(batch, losses)
+            shaped_loss.backward()
             if self.baseline is not None:
                 predicted_losses, baseline_losses = self.baseline.update(batch, self.step, losses)
                 baseline_losses = torch.nan_to_num(baseline_losses, nan=0.0, posinf=0.0, neginf=0.0)

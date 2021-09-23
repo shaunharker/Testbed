@@ -1,5 +1,5 @@
 import torch
-from pydivsufsort import divsufsort, kasai, sa_search
+
 from random import choices, randrange
 from math import log
 from time import time
@@ -8,6 +8,7 @@ from collections import defaultdict
 import numba
 from numba import njit, guvectorize, int64
 import numpy as np
+import jsonlines
 
 ## datasets
 def gutenberg(idx):
@@ -16,7 +17,8 @@ def gutenberg(idx):
         return infile.read(2**25)
 
 def pile(idx):
-    with open('/home/sharker/data/thepile/00.jsonl', 'rb') as infile:
+    bytes = 0
+    with jsonlines.open('/home/sharker/data/thepile/00.jsonl') as infile:
         infile.seek(idx*2**25)
         return infile.read(2**25)
 
@@ -93,16 +95,14 @@ D = torch.tensor([(((B[idx].item()*C[idx].item())%p+1)*modinv(A[idx].item(), p))
                   for idx in range(256)], dtype=torch.long, device='cuda')
 torch.manual_seed(seed)  # todo: use a context manager for this sort of thing
 
-def ngram_count_generator(n=8, n_shards=4):
+def ngram_count_generator(producer, n=8, n_shards=4):
     for shard_idx in range(n_shards):
-        chunk = gutenberg(shard_idx)
-        print(f"{time()-start}. Got chunk. length = {len(chunk)}")
+        chunk = producer(shard_idx)
         index = torch.tensor(np.frombuffer(chunk, dtype=np.uint8),device='cuda').long()
         a = torch.gather(input=A, dim=0, index=index)
         b = torch.gather(input=B, dim=0, index=index)
         c = torch.gather(input=C, dim=0, index=index)
         d = torch.gather(input=D, dim=0, index=index)
-        print(f"{time()-start}. Translated chunk to character matrices.")
         k = 1
         while k < n:
             (a,b,
@@ -116,12 +116,11 @@ def ngram_count_generator(n=8, n_shards=4):
             d = torch.fmod(d, 2**32-5)
             k = k*2
         Y = 2**31 * b + c  # todo: get that extra bit despite signed integer type
-        print(f"{time()-start}. Computed substring hashes.")
-        yield torch.stack(torch.unique(Y,return_counts=True))
+        yield torch.stack(torch.unique(Y,return_counts=True)).cpu().numpy()
 
 @guvectorize([(int64[:], int64[:], int64[:], int64[:],
                int64[:], int64[:], int64[:], int64[:])],
-             '(n),(n),(n),(n),(m),(m)->(m),(m)')
+             '(n),(n),(m),(m),(k),(k)->(k),(k)')
 def mergecounts(x1, y1, x2, y2, x, y, X, Y):
     i1 = 0
     i2 = 0
@@ -164,20 +163,20 @@ def merge(item1, item2):
     Y = Y[:N]
     return np.stack((X, Y))
 
-def ngrams(n, n_shards):
+def ngrams(n, n_shards, max_ngrams=2**25, producer=gutenberg):
     items = {}
-    max_sz = 0
-    for item in ngram_count_generator(n, n_shards):
+    top_sz = 0
+    for item in ngram_count_generator(n, n_shards, producer):
         sz = 1
         while sz in items:
             item = merge(items[sz], item)
             del items[sz]
             sz += 1
-        items[sz] = item
-        max_sz = max(sz, max_sz)
+        items[sz] = item[:,-max_ngrams:]
+        top_sz = max(sz, top_sz)
     item = None
     # print(f"items = {items}")
-    for sz in range(max_sz+1):
+    for sz in range(top_sz+1):
         if sz in items:
             if item is None:
                 item = items[sz]

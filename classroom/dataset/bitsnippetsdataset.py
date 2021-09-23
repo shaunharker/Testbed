@@ -9,7 +9,7 @@ from .utf8 import utf8decode, utf8encode
 user = os.environ["USER"]
 
 
-class GutenbergSnippetsDataset:
+class BitSnippetsDataset:
     def __init__(self, path=None, line=None, device='cuda'):
         if path is None:
             if line is None:
@@ -23,12 +23,11 @@ class GutenbergSnippetsDataset:
         self._load()
 
     def batch(self, batch_size, example_length, offset=None):
-        L = self.line or 2*example_length
-        sz = batch_size*L
-        offset = offset if offset is not None else randrange(self.n_bytes)
-        batch_offset = offset%(self.n_bytes//sz)
-        example_offset = (offset//(self.n_bytes//sz))%(L-example_length)
-        return torch.tensor(self.data[sz*batch_offset:sz*batch_offset+sz].reshape(batch_size, L)[:,example_offset:example_offset+example_length], dtype=torch.long, device=self.device)
+        L = self.line
+        # Todo: make offset arg functional rather than always being random
+        line_offset = randrange(self.n_bytes//L - batch_size)
+        example_offset = randrange(L-example_length//8)
+        return torch.tensor(np.unpack_bits(self.data[L*line_offset:L*(line_offset+batch_size)].reshape(batch_size, L)[:,example_offset:example_offset+example_length//8], axis=1, bitorder='little'), dtype=torch.float32, device=self.device)
 
     def __getstate__(self):
         state = self.__dict__.copy()

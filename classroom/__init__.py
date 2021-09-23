@@ -9,6 +9,7 @@ import classroom.util
 
 from classroom.dataset import BytesDataset
 from classroom.dataset import GutenbergSnippetsDataset
+from classroom.dataset import BitSnippetsDataset
 from classroom.dataset import RandomTokensDataset
 from classroom.dataset import utf8encode
 from classroom.dataset import utf8decode

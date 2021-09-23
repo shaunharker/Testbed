@@ -11,7 +11,7 @@ class BytesDataset:
         self.device = device
         self._load()
 
-    def batch(self, offset, batch_size, example_length):
+    def batch(self, batch_size, example_length, offset):
         sz = batch_size*example_length
         idx = offset%(self.n_bytes-sz)
         return torch.tensor(self.data[idx:idx+sz], dtype=torch.long, device=self.device).view(batch_size, example_length)
