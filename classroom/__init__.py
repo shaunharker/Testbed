@@ -9,12 +9,14 @@ import classroom.util
 
 from classroom.dataset import BytesDataset
 from classroom.dataset import GutenbergSnippetsDataset
-from classroom.dataset import BitSnippetsDataset
+from classroom.dataset import GutenbergBitsDataset
+from classroom.dataset import GutenbergBytesDataset
+from classroom.dataset import GutenbergGPT2Dataset
 from classroom.dataset import RandomTokensDataset
 from classroom.dataset import utf8encode
 from classroom.dataset import utf8decode
 
-from classroom.model import MLPLM, MyLM
+from classroom.model import MLPLM, MyLM, ABPCNLM
 from classroom.model import TransformerLM
 from classroom.model import ngrams
 

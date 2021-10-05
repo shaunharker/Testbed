@@ -9,25 +9,25 @@ from .utf8 import utf8decode, utf8encode
 user = os.environ["USER"]
 
 
-class BitSnippetsDataset:
+class GutenbergBitsDataset:
     def __init__(self, path=None, device='cuda'):
         if path is None:
-            if line is None:
-                line = 1024
-            path = f"/home/{user}/data/gutenberg.{line}.utf8"
+            path = f"/home/{user}/data/gutenberg.utf8"
         self.path = path
-        self.line = line
         self.device = device
         self.decode = utf8decode
         self.encode = utf8encode
         self._load()
 
     def batch(self, batch_size, example_length, offset=None):
-        L = self.line
-        # Todo: make offset arg functional rather than always being random
-        line_offset = randrange(self.n_bytes//L - batch_size)
-        example_offset = randrange(L-example_length//8)
-        return torch.tensor(np.unpack_bits(self.data[L*line_offset:L*(line_offset+batch_size)].reshape(batch_size, L)[:,example_offset:example_offset+example_length//8], axis=1, bitorder='little'), dtype=torch.float32, device=self.device)
+        n_example_bytes = example_length//8 + 1
+        get_example = lambda: (lambda byte_offset, bit_offset: np.unpackbits(self.data[byte_offset:byte_offset+n_example_bytes],
+            bitorder='little')[bit_offset:bit_offset+example_length])(randrange(self.n_bytes-n_example_bytes), randrange(8))
+        es = [get_example() for _ in range(batch_size)]
+        return torch.tensor(
+            np.stack(es).reshape(batch_size, example_length),
+            dtype=torch.long,
+            device=self.device)
 
     def __getstate__(self):
         state = self.__dict__.copy()
