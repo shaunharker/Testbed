@@ -1,4 +1,5 @@
 import types
+import numpy as np
 
 def utf8encode(char_sequence):
     if type(char_sequence) == types.GeneratorType:
@@ -46,3 +47,39 @@ def utf8decode(byte_sequence):
         return stream()
     else:
         return ''.join(list(stream()))
+
+def utf8bitsencode(char_seq: str):
+    return np.unpackbits(np.frombuffer(bytes(char_seq, encoding='utf-8'), dtype=np.uint8),
+        bitorder='little').tolist()
+
+def utf8bitsdecode(bits):
+    result = bytes()
+    idx = 0
+    while idx+7 < len(bits):
+        if bits[idx+7] == 0:
+            result += bytes([sum(2**i * bits[idx + i] for i in range(8))])
+            idx += 8
+        elif idx+15 < len(bits) and  (bits[idx+5] == 0 and bits[idx+6] == 1 and bits[idx+7] == 1 and
+              bits[idx+14] == 0 and bits[idx+15] == 1):
+            result += bytes([sum(2**i * bits[idx + i] for i in range(8)),
+                       sum(2**i * bits[idx + i + 8] for i in range(8))])
+            idx += 16
+        elif idx+23 < len(bits) and (bits[idx+4] == 0 and bits[idx+5] == 1 and bits[idx+6] == 1 and bits[idx+7] == 1 and
+              bits[idx+14] == 0 and bits[idx+15] == 1 and
+              bits[idx+22] == 0 and bits[idx+23] == 1):
+            result += bytes([sum(2**i * bits[idx + i] for i in range(8)),
+                       sum(2**i * bits[idx + i + 8] for i in range(8)),
+                       sum(2**i * bits[idx + i + 16] for i in range(8))])
+            idx += 24
+        elif idx+31 < len(bits) and (bits[idx+3] == 0 and bits[idx+4] == 1 and bits[idx+5] == 1 and bits[idx+6] == 1 and bits[idx+7] == 1 and
+              bits[idx+14] == 0 and bits[idx+15] == 1 and
+              bits[idx+22] == 0 and bits[idx+23] == 1 and
+              bits[idx+30] == 0 and bits[idx+31] == 1):
+            result += bytes([sum(2**i * bits[idx + i] for i in range(8)),
+                       sum(2**i * bits[idx + i + 8] for i in range(8)),
+                       sum(2**i * bits[idx + i + 16] for i in range(8)),
+                       sum(2**i * bits[idx + i + 24] for i in range(8))])
+            idx += 32
+        else:
+            idx += 1
+    return result.decode('utf-8')
