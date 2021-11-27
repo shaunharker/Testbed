@@ -24,7 +24,6 @@ from classroom.model import MLPLM
 from classroom.model import MyLM
 from classroom.model import ABPCNLM
 from classroom.model import TransformerLM
-from classroom.model import ngrams
 
 from classroom.optimizer import AdamW
 from classroom.optimizer import Sonny
