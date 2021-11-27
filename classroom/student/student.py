@@ -18,7 +18,7 @@ class Student:
     * `clone` creates a clone which is a deepcopy except for `self.parent`, which is not a copy.
     * `mutate` mutates the student by altering `self.batch_size` by a randomly chosen factor and similiary altering optimizer learning rates.
     """
-    def __init__(self, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None):
+    def __init__(self, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None, device=None):
         self.model = model
         self.optimizer = optimizer
         self.dataset = dataset
@@ -36,7 +36,9 @@ class Student:
         self.baseline_grades = []
         self.predicted_grades = []
         self.shaping = lambda batch, losses: torch.mean(losses)
-        self.device = 'cuda'
+        if device is None:
+            device = 'cuda'
+        self.device = device
 
     @staticmethod
     def load_from_path(path):
