@@ -9,13 +9,13 @@
 from setuptools import setup
 
 setup(
-    name='classroom',
+    name='scholar',
     version='0.0.1',
     author='Shaun Harker',
     author_email='sharker81@gmail.com',
     description='Machine Learning using PyTorch',
     long_description='',
-    packages=['classroom'],
+    packages=['scholar'],
     zip_safe=True,
     url = '',
     download_url = '',
