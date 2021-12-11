@@ -4,7 +4,7 @@ from random import randrange
 import numpy as np
 import torch
 import os
-from .utf8 import utf8decode, utf8encode
+from .utf8 import utf8bitsdecode, utf8bitsencode
 
 user = os.environ["USER"]
 
@@ -15,8 +15,8 @@ class GutenbergBitsDataset:
             path = f"/home/{user}/data/gutenberg.utf8"
         self.path = path
         self.device = device
-        self.decode = utf8decode
-        self.encode = utf8encode
+        self.decode = utf8bitsdecode
+        self.encode = utf8bitsencode
         self._load()
 
     def batch(self, batch_size, example_length, offset=None):
