@@ -3,6 +3,7 @@
 # Byte-compiled / optimized / DLL files
 *.html
 labs
+*ipynb
 notes/*.ipynb
 src/*.ipynb
 minicorpus.txt

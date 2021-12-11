@@ -479,32 +479,32 @@ class MinervaNLM(Module):
         super().__init__()
         self.config = config
 
-        self.embedding = (
-            Embedding(
-                n_classes=config.n_vocab,
-                d_model=config.d_embd))
+        self.embedding = Embedding(
+            n_classes=config.n_vocab,
+            d_model=config.d_embd)
 
-        self.read = (
-            MLP(d_in=n_ctx*d_embd,
-                d_hidden=d_hidden,
-                nonlinearity=nonlinearity,
-                d_out=d_model))
+        self.read = MLP(
+            d_in=config.n_ctx*config.d_embd,
+            d_hidden=config.d_hidden,
+            nonlinearity=config.nonlinearity,
+            d_out=config.d_model)
 
-        self.think = (
-            ResidualDropoutLayerNorm(
-                layer=MyLayer(
-                    d_model=n_ctx*d_model,
-                    d_hidden=d_hidden,
-                    nonlinearity=nonlinearity,
-                    p_dropout=p_dropout),
-                d_model=n_ctx*d_model,
-                p_dropout=p_dropout))
+        self.thunk = MLP(
+            d_model=config.d_model,
+            d_hidden=config.d_hidden,
+            nonlinearity=config.nonlinearity,
+            p_dropout=config.p_dropout)
 
-        self.write = (
-            MLP(d_in=n_ctx*d_model,
-                d_hidden=d_hidden,
-                nonlinearity=nonlinearity,
-                d_out=self.n_vocab_out))
+        self.think = ResidualDropoutLayerNorm(
+            layer=self.thunk,
+            d_model=config.d_model,
+            p_dropout=config.p_dropout)
+
+        self.write = MLP(
+            d_in=config.d_model,
+            d_hidden=config.d_hidden,
+            nonlinearity=config.nonlinearity,
+            d_out=config.n_vocab_out)
 
         self.split_example = SplitExample("last")
         self.crossentropyloss = CrossEntropyLoss(n_vocab_out)
