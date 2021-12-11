@@ -1,11 +1,12 @@
 # classroom/__init__.py
 # Shaun Harker
 # 2021-06-20
+import torch
+
 import classroom.dataset
 import classroom.gui
 import classroom.model
 import classroom.trainer
-import classroom.util
 
 from classroom.dataset import GutenbergBitsDataset
 from classroom.dataset import GutenbergBytesDataset

@@ -38,4 +38,4 @@ class GutenbergBytesDataset:
 
     def _load(self):
         self.n_bytes = Path(self.path).stat().st_size
-        self.data = np.memmap(self.path, mode='r')
+        self.data = np.memmap(self.path, dtype=np.uint8, mode='r', offset=0)

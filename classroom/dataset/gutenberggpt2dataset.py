@@ -4,16 +4,9 @@ from random import randrange
 import numpy as np
 import torch
 import os
-from transformers import GPT2TokenizerFast
-tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
+from .gpt2 import gpt2decode, gpt2encode
 
 user = os.environ["USER"]
-
-def gpt2decode(tokens):
-    return tokenizer.decode(tokens)
-
-def gpt2encode(text):
-    return tokenizer.encode(text)
 
 
 class GutenbergGPT2Dataset:
@@ -45,4 +38,4 @@ class GutenbergGPT2Dataset:
 
     def _load(self):
         self.n_tokens = (Path(self.path).stat().st_size - 128)//2
-        self.data = np.memmap("/home/sharker/data/gutenberg.gpt2.npy", dtype=np.uint16, mode='r', offset=128)
+        self.data = np.memmap(self.path, dtype=np.uint16, mode='r', offset=128)
