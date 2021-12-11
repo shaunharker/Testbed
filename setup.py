@@ -10,7 +10,7 @@ from setuptools import setup
 
 setup(
     name='scholar',
-    version='0.0.1',
+    version='2021.12.11',
     author='Shaun Harker',
     author_email='sharker81@gmail.com',
     description='Machine Learning using PyTorch',
