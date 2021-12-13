@@ -9,16 +9,31 @@ class Trainer:
     """
     Encapsulates `model`, `optimizer`, `dataset`, `batch_size`, `example_length` for the purposes of training.
     """
-    def __init__(self, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None, device=None):
+    def __init__(self, model=None, optimizer=None, dataset=None, batch_size=None, example_length=None):
         self.model = model
         self.optimizer = optimizer
         self.dataset = dataset
         self.batch_size = batch_size
         self.example_length = example_length
         self.n = 0
-        if device is None:
-            device = 'cuda'
-        self.device = device
+
+    def step(self, shaping=None):
+        """
+        Use `self.optimizer` to train `self.model` for one step using a batch obtained from `self.dataset` using training hyperparameters `self.batch_size` and `self.example_length`.
+        """
+        def closure():
+            batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length, offset=None)
+            losses = self.model(batch)
+            losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
+            if shaping is None:
+                loss = torch.mean(losses)
+            else:
+                loss = shaping(batch, losses)
+            loss.backward()
+            return loss.item()
+        loss = self.optimizer.step(closure)
+        self.n += 1
+        return loss
 
     @staticmethod
     def load_from_path(path):
@@ -53,31 +68,3 @@ class Trainer:
             "example_length": self.example_length,
             "n": self.n}
         torch.save(checkpoint, path)
-
-    def clone(self):
-        """
-        Create a clone of `self` and return it.
-        """
-        try:
-            clone = copy.deepcopy(self)
-        except Exception as e:
-            print('clone exception', e)
-        return clone
-
-    def clone_model(self):
-        return copy.deepcopy(self.model)
-
-    def step(self):
-        """
-        Use `self.optimizer` to train `self.model` for one step using a batch obtained from `self.dataset` using training hyperparameters `self.batch_size` and `self.example_length`.
-        """
-        def closure():
-            batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length, offset=None)
-            losses = self.model(batch)
-            losses = torch.nan_to_num(losses, nan=0.0, posinf=0.0, neginf=0.0)
-            loss = torch.mean(losses.detach()).item()
-            return loss
-
-        loss = self.optimizer.step(closure)
-        self.n += 1
-        return loss, baseline_loss

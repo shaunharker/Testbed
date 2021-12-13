@@ -22,7 +22,7 @@ The answer to this question is very momentous, and affects profoundly our whole 
 
 When first the opposition of fact and ideal grows fully visible, a spirit of fiery revolt, of fierce hatred of the gods, seems necessary to the assertion of freedom. To defy with Promethean constancy a hostile universe, to keep its evil always in view, always actively hated, to refuse no pain that the malice of Power can invent, appears to be the duty of all who will not bow before the inevitable. But indignation is still a bondage, for it compels our thoughts to be occupied with an evil world; and in the fierceness of desire from which rebellion springs there is a kind of self-assertion which it is necessary for the wise to overcome. Indignation is a submission of our thoughts, but not of our desires; the Stoic freedom in which wisdom consists is found in the submission of our desires, but not of our thoughts. From the submission of our desires springs the virtue of resignation; from the freedom of our thoughts springs the whole world of art and philosophy, and the vision of beauty by which, at last, we half reconquer the reluctant world."""
 
-def autocomplete(model, encode, decode, prompt=None, n_ctx=None, temp=1.0):
+def autocomplete(model, encode, decode, prompt=None, n_ctx=None, temp=1.0, n_generate=512, device=None):
     """
     Autocomplete using the model
 
@@ -40,6 +40,8 @@ def autocomplete(model, encode, decode, prompt=None, n_ctx=None, temp=1.0):
         n_ctx = model.n_ctx
     if prompt is None:
         prompt = default_prompt
+    if device is None:
+        device = model.device
     x = encode(prompt)
     x = x[-n_ctx:]
     prompt = decode(x)
@@ -48,13 +50,11 @@ def autocomplete(model, encode, decode, prompt=None, n_ctx=None, temp=1.0):
     def sampler(x):
         x = list(x)
         for _ in range(n_generate):
-            probs = model.inference(torch.tensor(x, dtype=torch.long, device=model.device).unsqueeze(0)).view(-1)[-model.n_vocab_out:]
+            probs = model.inference(torch.tensor(x, dtype=torch.long, device=device).unsqueeze(0)).view(-1)[-model.n_vocab_out:]
             if temp > 0:
                 y = Categorical(probs=probs**(1.0/temp)).sample().item()
             else:
                 y = torch.argmax(probs).item()
             x = (x + [y])[-n_ctx:]
-            if output is not None:
-                output.append(y)
             yield y
     return decode(list(sampler(x)))
