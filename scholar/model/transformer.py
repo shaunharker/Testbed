@@ -111,11 +111,12 @@ class TransformerLM(Module):
         self.p_dropout_attn_out = p_dropout_attn_out
         self.p_dropout_mlp = p_dropout_mlp
         self.autocast_enabled = autocast_enabled or False
+        self.mode = mode
         self.mask = mask
         self.language_model = (
             LanguageModel(
                 n_vocab_out=n_vocab_out,
-                mode="shift",
+                mode=mode,
                 module=
                     Sequential(
                         Embedding(n_vocab_in, d_model),
