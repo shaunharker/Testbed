@@ -6,12 +6,11 @@ import torch
 import os
 from .utf8 import utf8bitsdecode, utf8bitsencode
 
-user = os.environ["USER"]
-
 
 class GutenbergBitsDataset:
     def __init__(self, path=None, device='cuda'):
         if path is None:
+            user = os.environ["USER"]
             path = f"/home/{user}/data/gutenberg.utf8"
         self.path = path
         self.device = device

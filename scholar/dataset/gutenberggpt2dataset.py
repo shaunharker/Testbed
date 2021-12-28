@@ -6,12 +6,11 @@ import torch
 import os
 from .gpt2 import gpt2decode, gpt2encode
 
-user = os.environ["USER"]
-
 
 class GutenbergGPT2Dataset:
     def __init__(self, path=None, device='cuda'):
         if path is None:
+            user = os.environ["USER"]
             path = f"/home/{user}/data/gutenberg.gpt2.npy"
         self.path = path
         self.device = device

@@ -4,25 +4,26 @@ from random import randrange
 import numpy as np
 import torch
 import os
-from .utf8 import utf8decode, utf8encode
+from .gpt2 import gpt2decode, gpt2encode
+
+user = os.environ["USER"]
 
 
-class GutenbergBytesDataset:
-    def __init__(self, path=None, device='cuda'):
+class Dataset:
+    def __init__(self, path=None, encoding="utf8", device='cuda'):
         if path is None:
-            user = os.environ["USER"]
-            path = f"/home/{user}/data/gutenberg.utf8"
+            path = f"/home/{user}/data/gutenberg.gpt2.npy"
         self.path = path
         self.device = device
-        self.decode = utf8decode
-        self.encode = utf8encode
+        self.decode = gpt2decode
+        self.encode = gpt2encode
         self._load()
 
     def batch(self, batch_size, example_length, offset=None):
-        get_example = lambda: (lambda offset: self.data[offset:offset+example_length])(randrange(self.n_bytes-example_length))
+        get_example = lambda: (lambda offset: self.data[offset:offset+example_length])(randrange(self.n_tokens-example_length))
         es = [get_example() for _ in range(batch_size)]
         return torch.tensor(
-            np.stack(es).reshape(batch_size, example_length),
+            np.stack(es).reshape(batch_size, example_length).astype(np.int32),
             dtype=torch.long,
             device=self.device)
 
@@ -36,5 +37,5 @@ class GutenbergBytesDataset:
         self._load()
 
     def _load(self):
-        self.n_bytes = Path(self.path).stat().st_size
-        self.data = np.memmap(self.path, dtype=np.uint8, mode='r', offset=0)
+        self.n_tokens = (Path(self.path).stat().st_size - 128)//2
+        self.data = np.memmap(self.path, dtype=np.uint16, mode='r', offset=128)
