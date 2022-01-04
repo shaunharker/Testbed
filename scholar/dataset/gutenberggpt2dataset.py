@@ -16,10 +16,15 @@ class GutenbergGPT2Dataset:
         self.device = device
         self.decode = gpt2decode
         self.encode = gpt2encode
+        self.offsets = []
         self._load()
 
-    def batch(self, batch_size, example_length, offset=None):
-        get_example = lambda: (lambda offset: self.data[offset:offset+example_length])(randrange(self.n_tokens-example_length))
+    def push(self, offset):
+        self.offsets.append(offset)
+
+    def batch(self, batch_size, example_length):
+        offset_fun = lambda: self.offsets.pop() if len(self.offsets) > 0 else randrange(self.n_tokens-example_length)
+        get_example = lambda: (lambda offset: self.data[offset:offset+example_length])(offset_fun())
         es = [get_example() for _ in range(batch_size)]
         return torch.tensor(
             np.stack(es).reshape(batch_size, example_length).astype(np.int32),
