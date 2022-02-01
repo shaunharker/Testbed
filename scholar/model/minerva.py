@@ -12,17 +12,13 @@ class MinervaConfig:
         n_ctx,
         d_embd,
         d_model,
-        n_layers,
         n_iterates,
         d_hidden,
-        nonlinearity,
-        p_dropout):
+        nonlinearity):
         self.n_vocab = n_vocab
         self.n_ctx = n_ctx
         self.d_embd = d_embd
         self.d_model = d_model
-
-        self.n_layers = n_layers
         self.n_iterates = n_iterates
         self.d_hidden = d_hidden
         self.nonlinearity = nonlinearity
