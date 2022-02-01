@@ -2,7 +2,7 @@ import math
 import torch
 from torch.nn import Module, Linear, Dropout, LayerNorm
 from torch.cuda.amp import autocast
-from .nn import Sequential, Embedding, MLP, LanguageModel, ResidualDropoutLayerNorm
+from .nn import Sequential, Embedding, MLP, LanguageModel, ResidualLayerNorm
 
 
 class MinervaConfig:
@@ -26,7 +26,6 @@ class MinervaConfig:
         self.n_iterates = n_iterates
         self.d_hidden = d_hidden
         self.nonlinearity = nonlinearity
-        self.p_dropout = p_dropout
 
 class MinervaNLM(Module):
     def __init__(self,
@@ -48,12 +47,11 @@ class MinervaNLM(Module):
             d_model=config.d_model,
             d_hidden=config.d_hidden,
             nonlinearity=config.nonlinearity,
-            p_dropout=config.p_dropout)
+            d_out=config.d_model)
 
-        self.think = ResidualDropoutLayerNorm(
+        self.think = ResidualLayerNorm(
             layer=self.thunk,
-            d_model=config.d_model,
-            p_dropout=config.p_dropout)
+            d_model=config.d_model)
 
         self.write = MLP(
             d_in=config.d_model,

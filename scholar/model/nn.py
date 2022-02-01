@@ -111,6 +111,18 @@ class ResidualDropoutLayerNorm(Module):
         return self.layernorm(x+self.dropout(self.layer(x)))
 
 
+class ResidualLayerNorm(Module):
+    def __init__(self, layer, d_model):
+        super().__init__()
+        self.d_model = d_model
+        self.layer = layer
+        self.layernorm = LayerNorm(d_model)
+
+    def forward(self, x):
+        assert x.shape[-1] == self.d_model, f"{x.shape[-1]} != {self.d_model}"
+        return self.layernorm(x+self.layer(x))
+
+
 class MLP(Module):
     def __init__(self, d_in, d_hidden, nonlinearity, d_out):
         super().__init__()
