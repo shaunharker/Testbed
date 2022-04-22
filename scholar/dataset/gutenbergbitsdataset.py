@@ -18,7 +18,7 @@ class GutenbergBitsDataset:
         self.encode = utf8bitsencode
         self._load()
 
-    def batch(self, batch_size, example_length, offset=None):
+    def batch(self, batch_size, example_length):
         n_example_bytes = example_length//8 + 1
         get_example = lambda: (lambda byte_offset, bit_offset: np.unpackbits(self.data[byte_offset:byte_offset+n_example_bytes],
             bitorder='little')[bit_offset:bit_offset+example_length])(randrange(self.n_bytes-n_example_bytes), randrange(8))

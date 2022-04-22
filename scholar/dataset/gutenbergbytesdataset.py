@@ -18,7 +18,7 @@ class GutenbergBytesDataset:
         self.encode = utf8encode
         self._load()
 
-    def batch(self, batch_size, example_length, offset=None):
+    def batch(self, batch_size, example_length):
         get_example = lambda: (lambda offset: self.data[offset:offset+example_length])(randrange(self.n_bytes-example_length))
         es = [get_example() for _ in range(batch_size)]
         return torch.tensor(
