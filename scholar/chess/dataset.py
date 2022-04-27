@@ -4,7 +4,7 @@ from random import randrange
 import numpy as np
 import os
 import torch
-import stockfish as Stockfish
+from stockfish import Stockfish
 import chess
 
 def utf8encode(char_sequence):
@@ -99,13 +99,14 @@ class ChessDataset:
 
 def game_targets(game):
     def look(board):
-        piece_encoding = {'.': 0, 'K': 1, 'Q': 2, 'N': 3, 'B': 4, 'R': 5, 'P': 6,
-                          'k': 7, 'q': 8, 'n': 9, 'b': 10, 'r': 11, 'p': 12}
+        piece_encoding = {'.': 0, 'K': 1, 'Q': 2, 'N': 3, 'B': 4, 'R': 5,
+            'P': 6, 'k': 7, 'q': 8, 'n': 9, 'b': 10, 'r': 11, 'p': 12}
         fen = (board.fen().split()[0].replace("/", '').replace("8", "44")
             .replace("7", "43").replace("6", "33").replace("5", "32")
             .replace("4", "22").replace("3", "21").replace("2", "11")
             .replace("1", "."))
-        return torch.tensor([piece_encoding[c] for c in fen], dtype=torch.long,  device="cuda")
+        return torch.tensor([piece_encoding[c] for c in fen],
+            dtype=torch.long,  device="cuda")
 
     def hotloop(move, legal):
         n = len(move) + 1
@@ -136,8 +137,9 @@ def game_targets(game):
         else:
             action_target[idx+n-1, ord("\n")] = 1
         idx += n
-    torchify = lambda x: torch.tensor(np.frombuffer(bytes(x, encoding='utf8'),
-        dtype=np.uint8), dtype=torch.long, device="cuda")
+    torchify = lambda x: torch.tensor(np.frombuffer(
+        bytes(x, encoding='utf8'), dtype=np.uint8),
+        dtype=torch.long, device="cuda")
     seq_input = torchify("\n" + game.strip())
     seq_target = torchify(game.strip() + ("\n" if len(legal)==0 else " "))
     return seq_input, seq_target, vision_target, action_target
@@ -173,6 +175,5 @@ def training_batch():
         if keep:
             moves.append(move)
     moves = list(reversed(moves))
-    moves = moves[:512]
-    game = ' '.join(reversed(moves))
+    game = ' '.join(moves[:512])
     return game_targets(game)
