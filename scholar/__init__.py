@@ -8,7 +8,7 @@ import scholar.dataset
 import scholar.optimizer
 import scholar.trainer
 import scholar.gui
-
+import scholar.chess
 
 def numel(model):
     return sum(p.numel() for p in model.parameters())

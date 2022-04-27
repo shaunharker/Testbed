@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 from random import randrange
 import numpy as np
-import torch
 import os
 from .utf8 import utf8decode, utf8encode
 
@@ -11,7 +10,7 @@ class ChessDataset:
     def __init__(self, path=None, device='cuda'):
         if path is None:
             user = os.environ["USER"]
-            path = f"/home/{user}/data/chess.utf8"
+            path = f"/home/{user}/data/standard-chess.utf8"
         self.path = path
         self.device = device
         self.decode = utf8decode

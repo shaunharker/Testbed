@@ -84,6 +84,9 @@ class TransformerLM(Module):
                  n_heads,
                  d_hidden,
                  n_layers,
+                 n_layers_init=0,
+                 n_layers_final=0,
+                 n_iter_core=1,
                  mode='shift',
                  mask='causal',
                  autocast_enabled=None):
@@ -97,9 +100,17 @@ class TransformerLM(Module):
         self.n_heads = n_heads
         self.d_hidden = d_hidden
         self.n_layers = n_layers
+        self.n_layers_init = n_layers_init
+        self.n_layers_final = n_layers_final
+        self.n_iter_core = n_iter_core
         self.autocast_enabled = autocast_enabled or False
         self.mode = mode
         self.mask = mask
+        self.transformerlayers = [TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, mask) for _ in range(n_layers)]
+        assert n_layers >= n_layers_init + n_layers_final
+        # print('A', self.transformerlayers)
+        self.transformerlayers = self.transformerlayers[:n_layers_init] + (self.transformerlayers[n_layers_init:-n_layers_final])*n_iter_core + self.transformerlayers[-n_layers_final:]
+        # print('B', self.transformerlayers)
         self.language_model = (
             LanguageModel(
                 n_vocab_out=n_vocab_out,
@@ -108,8 +119,7 @@ class TransformerLM(Module):
                     Sequential(
                         Embedding(n_vocab_in, d_model),
                         PositionalEncoding(n_ctx, d_model),
-                        Sequential(
-                            TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, mask) for _ in range(n_layers)),
+                        Sequential(layer for layer in self.transformerlayers),
                         Linear(d_model, n_vocab_out))))
 
     def forward(self, x):

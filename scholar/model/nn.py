@@ -18,7 +18,6 @@ class SplitExample(Module):
         if self.mode == "last":
             return (xy[...,:-1].contiguous(), xy[...,-1].contiguous())
         elif self.mode == "shift":
-            n = xy.shape[-1]
             return (xy[...,:-1].contiguous(), xy[...,1:].contiguous())
 
 

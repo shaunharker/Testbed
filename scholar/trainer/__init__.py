@@ -18,24 +18,33 @@ class Trainer:
         self.example_length = example_length
         self.n = 0
         self.losses = []
+        self.t0 = None
 
-    def status(self):
-        dn = self.n
-        dt = time.time() - self.t0
-        N = dn//2
-        L = 8*np.mean(np.array(self.losses[dn-N:dn]))
+    def status(self, N=None):
+        n = self.n
+        if self.t0 is None:
+            t = 1
+        else:
+            t = time.time() - self.t0
+        N = N or n//2
+        L = 8*np.mean(np.array(self.losses[n-N:n]))
         now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
         message = '\n'.join([
             f"time            = {now[:-2]}",
             f"L               ~ {int(L*1e6)/1e6} bpc",
-            f"batch_size      = {self.batch_size}",
-            f"example_length  = {self.example_length}",
-            f"dn              = {dn} steps",
-            f"dt              = {int(dt)} seconds",
-            f"dn/dt           = {int(dn/dt*10)/10} steps per second",
-            f"feeding rate    = {int(self.batch_size*self.example_length*dn/dt/1024)} KiBps",
+            f"batch_size      = {self.batch_size(n)}",
+            f"example_length  = {self.example_length(n)}",
+            f"n               = {n} steps",
+            f"t               = {int(t)} seconds",
+            f"n/t             = {int(n/t*10)/10} steps per second",
+            f"feeding rate    = {int(self.batch_size(n)*self.example_length(n)*n/t/1024)} KiBps",
         ])
         return message
+
+    def reset(self):
+        self.n = 0
+        self.t0 = time.time()
+        self.losses=[]
 
     async def train(self):
         self.t0 = time.time()
@@ -72,7 +81,8 @@ class Trainer:
         """
         Return a batch from the dataset
         """
-        batch = self.dataset.batch(batch_size=self.batch_size, example_length=self.example_length)
+        n = self.n
+        batch = self.dataset.batch(batch_size=self.batch_size(n), example_length=self.example_length(n))
         return batch
 
     def shaping(self, batch, losses):
