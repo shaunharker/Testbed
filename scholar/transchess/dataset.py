@@ -7,6 +7,7 @@ import torch
 from stockfish import Stockfish
 import chess
 import types
+from .targets import targets
 
 def utf8encode(char_sequence):
     if type(char_sequence) == types.GeneratorType:

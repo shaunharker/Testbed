@@ -65,19 +65,9 @@ class TransChess:
     def generate(self, model):
         """
         use the provided neural net to come up with next move
+        equivalent to `model.move(game)`
         """
-        legal = self.legal()
-        move = ""
-        tries = 0
-        while move not in legal:
-            if tries > self.max_retries:
-                self.html_games.append(
-                    f'{self.highlight_game(self.game)}'
-                    f'<span style="color:red">{move}</span>')
-                return None
-            move = model.move(self.game)
-            tries += 1
-        return move
+        return model.move(self.game)
 
     def highlight_game(self, game):
         if game == "":
