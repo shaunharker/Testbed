@@ -26,7 +26,7 @@ class TransChess:
         with open("/home/sharker/data/standard-chess.utf8") as infile:
             book = list(infile.readlines())
         self.book = sorted(book)
-        self.in_book = lambda s: book[bisect.bisect_left(self.book,
+        self.in_book = lambda s: self.book[bisect.bisect_left(self.book,
             s)].startswith(s)
 
     def fen(self):
@@ -91,6 +91,8 @@ class TransChess:
                 hl_game += f'<span style="color:blue">{move}</span>'
             else:
                 hl_game += f'{move}'
+        if hl_game != "":
+            hl_game += " "
         return hl_game
 
     def back(self):
