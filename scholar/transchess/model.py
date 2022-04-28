@@ -1,6 +1,11 @@
 import torch
 from math import sqrt, log
 from torch.nn import Module, Linear, Sequential, Embedding, LayerNorm, Sigmoid, ReLU, GELU
+import numpy as np
+
+bytes_to_tensor = lambda x: torch.tensor(np.frombuffer(
+    bytes(x, encoding='utf8'), dtype=np.uint8),
+    dtype=torch.long, device="cuda")
 
 
 class Nonlinearity(Module):
@@ -111,19 +116,20 @@ class View(Module):
     def forward(self, x):
         return x.view(*x.shape[:-1], *self.suffix)
 
+
 class ChessLanguageModel(Module):
     def __init__(self, config=None):
         super().__init__()
         self.config = {
             "n_classes": 256,
             "n_ctx": 4096,
-            "n_layers": 3,
-            "plan": [0,1,2],
-            "d_model": 1024,
-            "d_k": 32,
-            "d_v": 32,
-            "n_heads": 32,
-            "d_hidden": 1024,
+            "n_layers": 9,
+            "plan": [0,1,2,3,4,5,6,7,8],
+            "d_model": 2500,
+            "d_k": 50,
+            "d_v": 50,
+            "n_heads": 50,
+            "d_hidden": 2500,
             "nonlinearity": "GELU",
             "mask": "causal",
             "device": "cuda"}
@@ -146,12 +152,15 @@ class ChessLanguageModel(Module):
         self.softmax = torch.nn.Softmax(dim=-1)
         self.to(device)
 
-    def forward(self, seq_input, seq_target, visual_target, action_target):
+    def numel(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def forward(self, game):
+        (seq_input, seq_target, visual_target, action_target) = targets(game)
         model_output = self.model(seq_input)
         seq_output = self.seq_head(model_output)
         visual_output = self.visual_head(model_output)
         action_output = self.action_head(model_output)
-        print('A', seq_output.shape, visual_output.shape, action_output.shape)
         # Per seq index, we get a 256 prediction
         seq_loss = self.crossentropyloss(
             seq_output.view(-1, 256),
@@ -168,8 +177,90 @@ class ChessLanguageModel(Module):
             action_output.view(-1, 2),
             action_target.view(-1)
         ).view(action_output.shape[:-1])/log(2)
-        return (seq_loss, visual_loss, action_loss)
+        return (game, seq_input, seq_target, visual_target, action_target, seq_loss, visual_loss, action_loss)
 
     @torch.no_grad()
-    def inference(self, seq_input):
-        return self.softmax(self.seq_head(self.model(seq_input)))
+    def inference(self, gamestring):
+        seq_input = bytes_to_tensor(gamestring)
+        model_output = self.model(seq_input)
+        seq_output = self.seq_head(model_output)
+        visual_output = self.visual_head(model_output)
+        action_output = self.action_head(model_output)
+        seq_probs = self.softmax(seq_output)
+        visual_probs = self.softmax(visual_output)
+        action_probs = self.softmax(action_output)
+        return (seq_probs, visual_probs, action_probs)
+
+    def move(self, game, temp=1.0):
+        Categorical = torch.distributions.Categorical
+        if game == "":
+            gamestring = "\n"
+        else:
+            gamestring = "\n" + game.strip() + " "
+        move = ""
+        while True:
+            (probs, _, _) = self.inference(gamestring)
+            probs = probs.view(-1)[-256:]
+            if temp > 0:
+                y = Categorical(probs=
+                    probs**(1.0/temp)).sample().item()
+            else:
+                y = torch.argmax(probs).item()
+            if y == 32:
+                break
+            if y == 10:
+                break
+            move += chr(y)
+            gamestring += chr(y)
+            if len(move) > 8:
+                break
+        return move
+
+import chess
+
+def targets(game):
+    def look(board):
+        piece_encoding = {'.': 0, 'K': 1, 'Q': 2, 'N': 3, 'B': 4, 'R': 5,
+            'P': 6, 'k': 7, 'q': 8, 'n': 9, 'b': 10, 'r': 11, 'p': 12}
+        fen = (board.fen().split()[0].replace("/", '').replace("8", "44")
+            .replace("7", "43").replace("6", "33").replace("5", "32")
+            .replace("4", "22").replace("3", "21").replace("2", "11")
+            .replace("1", "."))
+        return torch.tensor([piece_encoding[c] for c in fen],
+            dtype=torch.long,  device="cuda")
+
+    def chunk(move, legal):
+        n = len(move) + 1
+        action_target_chunk = torch.zeros([n, 256], dtype=torch.long,
+            device="cuda")
+        for d in range(len(move)):
+            c = move[d]
+            for m in legal:
+                if len(m) > d:
+                    action_target_chunk[d, ord(m[d])] = 1
+            legal = [m for m in legal if len(m) > d and m[d] == c]
+        return action_target_chunk
+
+    moves = game.split()
+    N = len(game.strip()) + 1 # add one for newline preamble
+    visual_target = torch.zeros([N,64], dtype=torch.long, device="cuda")
+    action_target = torch.zeros([N,256], dtype=torch.long, device="cuda")
+    board = chess.Board()
+    idx = 0
+    legal = [board.san(m) for m in board.legal_moves]
+    for move in moves:
+        n = len(move) + 1
+        visual_target[idx:idx+n,:] = look(board).reshape([1,-1])
+        action_target[idx:idx+n,:] = chunk(move, legal)
+        board.push_san(move)
+        legal = [board.san(m) for m in board.legal_moves]
+        if len(legal) > 0:
+            action_target[idx+n-1, ord(" ")] = 1
+        else:
+            action_target[idx+n-1, ord("\n")] = 1
+        idx += n
+
+    seq_input = bytes_to_tensor("\n" + game.strip())
+    seq_target = bytes_to_tensor(game.strip() +
+        ("\n" if len(legal)==0 else " "))
+    return seq_input, seq_target, visual_target, action_target

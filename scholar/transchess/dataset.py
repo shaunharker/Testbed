@@ -6,6 +6,7 @@ import os
 import torch
 from stockfish import Stockfish
 import chess
+import types
 
 def utf8encode(char_sequence):
     if type(char_sequence) == types.GeneratorType:
@@ -65,6 +66,10 @@ class ChessDataset:
         self.decode = utf8decode
         self.encode = utf8encode
         self._load()
+        with open("/home/sharker/data/standard-chess.utf8") as infile:
+            book = list(infile.readlines())
+        self.book = sorted(book)
+        self.in_book = lambda s: book[bisect.bisect_left(book, s)].startswith(s)
 
     def batch(self, batch_size, example_length):
         def adjust_offset(offset):
@@ -96,84 +101,38 @@ class ChessDataset:
         self.n_bytes = Path(self.path).stat().st_size
         self.data = np.memmap(self.path, dtype=np.uint8, mode='r', offset=0)
 
+    def bookgame(self, max_plies=800):
+        game = self.book[randrange(len(self.book))]
+        return ' '.join(game.split()[:max_plies])
 
-def game_targets(game):
-    def look(board):
-        piece_encoding = {'.': 0, 'K': 1, 'Q': 2, 'N': 3, 'B': 4, 'R': 5,
-            'P': 6, 'k': 7, 'q': 8, 'n': 9, 'b': 10, 'r': 11, 'p': 12}
-        fen = (board.fen().split()[0].replace("/", '').replace("8", "44")
-            .replace("7", "43").replace("6", "33").replace("5", "32")
-            .replace("4", "22").replace("3", "21").replace("2", "11")
-            .replace("1", "."))
-        return torch.tensor([piece_encoding[c] for c in fen],
-            dtype=torch.long,  device="cuda")
-
-    def hotloop(move, legal):
-        n = len(move) + 1
-        action_target = torch.zeros([n, 256], dtype=torch.long, device="cuda")
-        for d in range(len(move)):
-            c = move[d]
-            for m in legal:
-                if len(m) > d:
-                    action_target[d, ord(m[d])] = 1
-            legal = [m for m in legal if len(m) > d and m[d] == c]
-        return action_target
-
-    moves = game.split()
-    N = len(game.strip()) + 1 # add one for newline preamble
-    vision_target = torch.zeros([N,64], dtype=torch.long, device="cuda")
-    action_target = torch.zeros([N,256], dtype=torch.long, device="cuda")
-    board = chess.Board()
-    idx = 0
-    legal = [board.san(m) for m in board.legal_moves]
-    for move in moves:
-        n = len(move) + 1
-        vision_target[idx:idx+n,:] = look(board).reshape([1,-1])
-        action_target[idx:idx+n,:] = hotloop(move, legal)
-        board.push_san(move)
-        legal = [board.san(m) for m in board.legal_moves]
-        if len(legal) > 0:
-            action_target[idx+n-1, ord(" ")] = 1
-        else:
-            action_target[idx+n-1, ord("\n")] = 1
-        idx += n
-    torchify = lambda x: torch.tensor(np.frombuffer(
-        bytes(x, encoding='utf8'), dtype=np.uint8),
-        dtype=torch.long, device="cuda")
-    seq_input = torchify("\n" + game.strip())
-    seq_target = torchify(game.strip() + ("\n" if len(legal)==0 else " "))
-    return seq_input, seq_target, vision_target, action_target
-
-
-def training_batch():
-    engine = Stockfish()
-    board = chess.Board()
-    ply = 0
-    game = ""
-    while True:
-        engine.set_fen_position(fen_position = board.fen())
-        move = engine.get_best_move_time(time=1.0)
-        if move is None:
-            break
-        move = board.san(board.parse_uci(move))
-        board.push_san(move)
-        game = (game + " " + move).strip()
-        if board.can_claim_draw():
-            break
-        ply += 1
-        if ply > 512:
-            break
-    # if not a checkmate, remove tail after last capture or pawn advance
-    revmoves = list(reversed(game.split()))
-    keep = False
-    moves = []
-    for move in revmoves:
-        if "x" in move:
-            keep = True
-        if not any(move.startswith(c) for c in ["N", "Q", "K", "B", "R"]):
-            keep = True
-        if keep:
-            moves.append(move)
-    moves = list(reversed(moves))
-    game = ' '.join(moves[:512])
-    return game_targets(game)
+    def stockfishgame(self, max_plies=800):
+        engine = Stockfish()
+        board = chess.Board()
+        ply = 0
+        game = ""
+        while True:
+            engine.set_fen_position(fen_position = board.fen())
+            move = engine.get_best_move_time(time=1.0)
+            if move is None:
+                break
+            move = board.san(board.parse_uci(move))
+            board.push_san(move)
+            game = game + " " + move if len(game) > 0 else move
+            if board.can_claim_draw():
+                break
+            ply += 1
+            if ply >= max_plies:
+                break
+        # if not a checkmate, remove tail after last capture or pawn advance
+        # revmoves = list(reversed(game.split()))
+        # keep = False
+        # moves = []
+        # for move in revmoves:
+        #     if "x" in move:
+        #         keep = True
+        #     if not any(move.startswith(c) for c in ["N", "Q", "K", "B", "R"]):
+        #         keep = True
+        #     if keep:
+        #         moves.append(move)
+        # moves = list(reversed(moves))
+        return game
