@@ -11,8 +11,6 @@ user = os.environ["USER"]
 
 class Dataset:
     def __init__(self, path=None, encoding="utf8", device='cuda'):
-        if path is None:
-            path = f"/home/{user}/data/gutenberg.gpt2.npy"
         self.path = path
         self.device = device
         self.decode = gpt2decode

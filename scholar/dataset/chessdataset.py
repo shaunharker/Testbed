@@ -2,26 +2,32 @@ import os
 from pathlib import Path
 from random import randrange
 import numpy as np
-import torch
 import os
-from .utf8 import utf8bitsdecode, utf8bitsencode
+from .utf8 import utf8decode, utf8encode
 
 
-class GutenbergBitsDataset:
+class ChessDataset:
     def __init__(self, path=None, device='cuda'):
         if path is None:
             user = os.environ["USER"]
-            path = f"/home/{user}/data/gutenberg.utf8"
+            path = f"/home/{user}/data/standard-chess.utf8"
         self.path = path
         self.device = device
-        self.decode = utf8bitsdecode
-        self.encode = utf8bitsencode
+        self.decode = utf8decode
+        self.encode = utf8encode
         self._load()
 
     def batch(self, batch_size, example_length):
-        n_example_bytes = example_length//8 + 1
-        get_example = lambda: (lambda byte_offset, bit_offset: np.unpackbits(self.data[byte_offset:byte_offset+n_example_bytes],
-            bitorder='little')[bit_offset:bit_offset+example_length])(randrange(self.n_bytes-n_example_bytes), randrange(8))
+        def adjust_offset(offset):
+            """
+            return next newline position after offset
+            """
+            return np.where(self.data[offset:offset+10000] == 10)[0][0] + offset
+        def get_example():
+            offset = self.n_bytes
+            while offset + example_length >= self.n_bytes:
+                offset = adjust_offset(randrange(self.n_bytes-example_length))
+            return self.data[offset:offset+example_length]
         es = [get_example() for _ in range(batch_size)]
         return torch.tensor(
             np.stack(es).reshape(batch_size, example_length),
@@ -39,4 +45,4 @@ class GutenbergBitsDataset:
 
     def _load(self):
         self.n_bytes = Path(self.path).stat().st_size
-        self.data = np.memmap(self.path, mode='r')
+        self.data = np.memmap(self.path, dtype=np.uint8, mode='r', offset=0)
