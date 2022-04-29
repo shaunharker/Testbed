@@ -17,7 +17,8 @@ def targets(game):
         return torch.tensor([piece_encoding[c] for c in fen],
             dtype=torch.long,  device="cuda")
 
-    def chunk(move, legal):
+    def chunk(move, board):
+        legal = [board.san(m) for m in board.legal_moves]
         n = len(move) + 1
         action_target_chunk = torch.zeros([n, 256], dtype=torch.long,
             device="cuda")
@@ -26,29 +27,26 @@ def targets(game):
             for m in legal:
                 if len(m) > d:
                     action_target_chunk[d, ord(m[d])] = 1
-            legal = [m for m in legal if len(m) > d and m[d] == c]
+            legal = [m for m in legal if len(m) > d
+                and m[d] == c]
         return action_target_chunk
 
     moves = game.split()
-    N = len(game.strip()) + 1 # add one for newline preamble
+    N = len(game.strip()) + 1 # == sum(len(move+" ") for move in moves)
     visual_target = torch.zeros([N,64], dtype=torch.long, device="cuda")
     action_target = torch.zeros([N,256], dtype=torch.long, device="cuda")
     board = chess.Board()
     idx = 0
-    legal = [board.san(m) for m in board.legal_moves]
     for move in moves:
         n = len(move) + 1
         visual_target[idx:idx+n,:] = look(board).reshape([1,-1])
-        action_target[idx:idx+n,:] = chunk(move, legal)
+        action_target[idx:idx+n,:] = chunk(move, board)
         board.push_san(move)
-        legal = [board.san(m) for m in board.legal_moves]
-        if len(legal) > 0:
-            action_target[idx+n-1, ord(" ")] = 1
-        else:
-            action_target[idx+n-1, ord("\n")] = 1
         idx += n
+    # visual_target[idx] = look(board)
+    # for c in [board.san(m)[0] for m in board.legal_moves]:
+    #     action_target[idx,ord(c)] = 1
 
     seq_input = bytes_to_tensor("\n" + game.strip())
-    seq_target = bytes_to_tensor(game.strip() +
-        ("\n" if len(legal)==0 else " "))
+    seq_target = bytes_to_tensor(game.strip() + " ")
     return seq_input, seq_target, visual_target, action_target

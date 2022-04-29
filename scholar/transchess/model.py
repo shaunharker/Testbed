@@ -2,29 +2,30 @@ import torch
 from math import sqrt, log
 import random
 from torch.nn import Module, Linear, Sequential, Embedding, LayerNorm, Sigmoid, ReLU, GELU
+from torch.distributions import Categorical
 import numpy as np
 import chess
 from .targets import targets, bytes_to_tensor
 
 
 class Nonlinearity(Module):
-    def __init__(self, nonlinearity):
+    def __init__(self, **config):
         super().__init__()
-        self.nonlinearity = nonlinearity
-        self.f = {"sigmoid": Sigmoid(), "ReLU": ReLU(), "GELU": GELU()}[nonlinearity]
+        self.nonlinearity = config["nonlinearity"]
+        self.f = {"sigmoid": Sigmoid(), "ReLU": ReLU(), "GELU": GELU()}[self.nonlinearity]
 
     def forward(self, x):
         return self.f(x)
 
 
 class MLP(Module):
-    def __init__(self, config):
+    def __init__(self, **config):
         super().__init__()
         m = config["d_model"]
         n = config["d_hidden"]
         self.model = Sequential(
             Linear(m, n, bias=True),
-            Nonlinearity(config["nonlinearity"]),
+            Nonlinearity(**config),
             Linear(n, m, bias=True))
 
     def forward(self, x):
@@ -32,9 +33,9 @@ class MLP(Module):
 
 
 class Mask(Module):
-    def __init__(self, mask="none"):
+    def __init__(self, **config):
         super().__init__()
-        self.mask = mask
+        self.mask = config["mask"]
 
     def forward(self, x):
         n, device = x.shape[-1], x.device
@@ -45,7 +46,7 @@ class Mask(Module):
 
 
 class Attn(Module):
-    def __init__(self, config):
+    def __init__(self, **config):
         super().__init__()
         d_model = self.d_model = config["d_model"]
         d_k = self.d_k = config["d_k"]
@@ -54,7 +55,7 @@ class Attn(Module):
         self.query_proj = Linear(d_model, d_k*n_heads)
         self.key_proj = Linear(d_model, d_k*n_heads)
         self.value_proj = Linear(d_model, d_v*n_heads)
-        self.mask = Mask(mask=config["mask"])
+        self.mask = Mask(**config)
         self.softmax = torch.nn.Softmax(dim=-1)
         self.linear = Linear(d_v*n_heads, d_model, bias=False)
 
@@ -83,19 +84,19 @@ class ResidualLayerNorm(Module):
 
 
 class TransformerLayer(Module):
-    def __init__(self, config):
+    def __init__(self, **config):
         super().__init__()
         d_model = config["d_model"]
         self.model = Sequential(
-            ResidualLayerNorm(Attn(config), d_model),
-            ResidualLayerNorm(MLP(config), d_model))
+            ResidualLayerNorm(Attn(**config), d_model),
+            ResidualLayerNorm(MLP(**config), d_model))
 
     def forward(self, x):
         return self.model(x)
 
 
 class PositionalEncoding(Module):
-    def __init__(self, config):
+    def __init__(self, **config):
         super().__init__()
         n_ctx = config["n_ctx"]
         d_model = config["d_model"]
@@ -117,7 +118,7 @@ class View(Module):
 
 
 class ChessLanguageModel(Module):
-    def __init__(self, config=None):
+    def __init__(self, **config):
         super().__init__()
         self.config = {
             "n_classes": 256,
@@ -125,27 +126,31 @@ class ChessLanguageModel(Module):
             "n_layers": 9,
             "plan": [0,1,2,3,4,5,6,7,8],
             "d_model": 2500,
+            "d_hidden": 2500,
             "d_k": 50,
             "d_v": 50,
             "n_heads": 50,
-            "d_hidden": 2500,
             "nonlinearity": "GELU",
             "mask": "causal",
             "device": "cuda"}
         self.config.update(config or dict())
-        n_ctx = self.config["n_ctx"]
-        n_layers = self.config["n_layers"]
-        d_model = self.config["d_model"]
-        plan = self.config["plan"]
-        device = self.config["device"]
-        make_layer = lambda: TransformerLayer(self.config)
+        config = self.config
+        n_ctx = config["n_ctx"]
+        n_layers = config["n_layers"]
+        plan = config["plan"]
+        d_model = config["d_model"]
+        d_hidden = config["d_hidden"]
+        device = config["device"]
+        make_layer = lambda: TransformerLayer(**config)
         self.layers = [make_layer() for _ in range(n_layers)]
         self.model = Sequential(
             Embedding(256, d_model),
-            PositionalEncoding(self.config),
+            PositionalEncoding(**config),
             Sequential(*[self.layers[i] for i in plan]))
         self.seq_head = Linear(d_model, 256)
-        self.visual_head = Sequential(Linear(d_model, 64*13), View(64, 13))
+        self.visual_head = Sequential(MLP(**config),
+            Nonlinearity(**config), Linear(d_model, 64*13),
+            View(64, 13))
         self.action_head = Sequential(Linear(d_model, 256*2), View(256, 2))
         self.crossentropyloss = torch.nn.CrossEntropyLoss(reduction='none')
         self.softmax = torch.nn.Softmax(dim=-1)
@@ -190,8 +195,22 @@ class ChessLanguageModel(Module):
         action_probs = self.softmax(action_output)
         return (seq_probs, visual_probs, action_probs)
 
+    def boardstring(self, game, temp=1.0):
+        if game == "":
+            gamestring = "\n"
+        else:
+            gamestring = "\n" + game.strip() + " "
+        visual_probs = self.inference(gamestring)[1]
+        probs = visual_probs[-1]
+        result = ""
+        pieces = ".KQNBRPkqnbrp"
+        for i in range(64):
+            result += pieces[Categorical(probs=probs[i]**(1.0/temp)).sample().item() if temp > 0 else torch.argmax(probs[i]).item()]
+            if i%8 == 7:
+                result += "\n"
+        return result
+
     def move(self, game, temp=1.0):
-        Categorical = torch.distributions.Categorical
         if game == "":
             gamestring = "\n"
         else:
@@ -211,7 +230,7 @@ class ChessLanguageModel(Module):
             k = len(newmove)
             S = set(ord(move[k]) for move in legal
                 if move.startswith(newmove) and len(move) > k)
-            probs = self.inference(gamestring + newmove)[0].view(-1)[-256:]
+            probs = self.inference(gamestring + newmove)[0].view(-1)[-256:] # just [-1]?
             for i in range(256):
                 if i not in S:
                     probs[i] = 0
