@@ -123,13 +123,13 @@ class ChessLanguageModel(Module):
         self.config = {
             "n_classes": 256,
             "n_ctx": 4096,
-            "n_layers": 9,
-            "plan": [0,1,2,3,4,5,6,7,8],
-            "d_model": 2500,
-            "d_hidden": 2500,
-            "d_k": 50,
-            "d_v": 50,
-            "n_heads": 50,
+            "n_layers": 3,
+            "plan": [0,1,2],
+            "d_model": 4096,
+            "d_hidden": 4096,
+            "d_k": 64,
+            "d_v": 64,
+            "n_heads": 64,
             "nonlinearity": "GELU",
             "mask": "causal",
             "device": "cuda"}
@@ -148,8 +148,7 @@ class ChessLanguageModel(Module):
             PositionalEncoding(**config),
             Sequential(*[self.layers[i] for i in plan]))
         self.seq_head = Linear(d_model, 256)
-        self.visual_head = Sequential(MLP(**config),
-            Nonlinearity(**config), Linear(d_model, 64*13),
+        self.visual_head = Sequential(Linear(d_model, 64*13),
             View(64, 13))
         self.action_head = Sequential(Linear(d_model, 256*2), View(256, 2))
         self.crossentropyloss = torch.nn.CrossEntropyLoss(reduction='none')
@@ -167,9 +166,8 @@ class ChessLanguageModel(Module):
         action_output = self.action_head(model_output)
         # Per seq index, we get a 256 prediction
         seq_loss = self.crossentropyloss(
-            seq_output.view(-1, 256),
-            seq_target.view(-1)
-        ).view(seq_output.shape[:-1])/log(256)
+            seq_output.view(-1, 256)[:-1],
+            seq_target.view(-1))/log(256)
         # Per seq index, we get a 64x13 .pnkqbrPNKQBR
         visual_loss = self.crossentropyloss(
             visual_output.view(-1, 13),

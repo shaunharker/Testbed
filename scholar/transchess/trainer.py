@@ -63,11 +63,16 @@ class Trainer:
         return message
 
     def closure(self):
-        game = self.dataset.bookgame(
-           max_plies=self.plies)
-        (game, seq_input, seq_target, visual_target,
-         action_target, seq_loss, visual_loss,
-         action_loss) = self.model(game)
+        while True:
+            try:
+                game = self.dataset.bookgame(
+                   max_plies=self.plies)
+                (game, seq_input, seq_target, visual_target,
+                 action_target, seq_loss, visual_loss,
+                 action_loss) = self.model(game)
+                break
+            except:
+                pass
         seq_loss_mean = torch.mean(seq_loss)
         visual_loss_mean = torch.mean(visual_loss)
         action_loss_mean = torch.mean(action_loss)

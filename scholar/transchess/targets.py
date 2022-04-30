@@ -32,7 +32,9 @@ def targets(game):
         return action_target_chunk
 
     moves = game.split()
-    N = len(game.strip()) + 1 # == sum(len(move+" ") for move in moves)
+    N = len(game.strip()) + 2
+    seq_input = bytes_to_tensor("\n" + game.strip() + " ")
+    seq_target = bytes_to_tensor(game.strip() + " ")
     visual_target = torch.zeros([N,64], dtype=torch.long, device="cuda")
     action_target = torch.zeros([N,256], dtype=torch.long, device="cuda")
     board = chess.Board()
@@ -43,10 +45,7 @@ def targets(game):
         action_target[idx:idx+n,:] = chunk(move, board)
         board.push_san(move)
         idx += n
-    # visual_target[idx] = look(board)
-    # for c in [board.san(m)[0] for m in board.legal_moves]:
-    #     action_target[idx,ord(c)] = 1
-
-    seq_input = bytes_to_tensor("\n" + game.strip())
-    seq_target = bytes_to_tensor(game.strip() + " ")
+    visual_target[idx] = look(board)
+    for c in [board.san(m)[0] for m in board.legal_moves]:
+        action_target[idx,ord(c)] = 1
     return seq_input, seq_target, visual_target, action_target
