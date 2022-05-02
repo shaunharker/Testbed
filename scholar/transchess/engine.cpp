@@ -30,6 +30,60 @@ constexpr uint64_t promoteB = uint64_t(1) << 10;
 constexpr uint64_t promoteN = uint64_t(1) << 11;
 constexpr uint64_t promote = promoteQ | promoteR | promoteB | promoteN;
 
+
+int ntz(uint64_t x) {
+    // We return the number of trailing zeros in
+    // the binary representation of x.
+    //
+    // We have that 0 <= x < 2**64.
+    //
+    // We begin by applying a function sensitive only
+    // to the least significant bit (lsb) of x:
+    //
+    //   x -> x^(x-1)  e.g. 0b11001000 -> 0b00001111
+    //
+    // Observe that x^(x-1) == 2**(ntz(x)+1) - 1.
+
+    uint64_t y = x^(x-1);
+
+    // Next, we multiply by 0x03f79d71b4cb0a89,
+    // and then roll off the first 58 bits.
+
+    constexpr uint64_t debruijn = 0x03f79d71b4cb0a89;
+
+    uint8_t z = (debruijn*y) >> 58;
+
+    // What? Don't look at me like that.
+    //
+    // With 58 bits rolled off, only 6 bits remain,
+    // so we must have one of 0, 1, 2, ..., 63.
+    //
+    // It turns out this number was judiciously
+    // chosen to make it so each of the possible
+    // values for y were mapped into distinct slots.
+    // See https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
+    //
+    // So we just use a look-up table of all 64
+    // possible answers. Easy peasy.
+
+    constexpr std::array<int,64> lookup =
+        {0, 47,  1, 56, 48, 27,  2, 60,
+        57, 49, 41, 37, 28, 16,  3, 61,
+        54, 58, 35, 52, 50, 42, 21, 44,
+        38, 32, 29, 23, 17, 11,  4, 62,
+        46, 55, 26, 59, 40, 36, 15, 53,
+        34, 51, 20, 43, 31, 22, 10, 45,
+        25, 39, 14, 33, 19, 30,  9, 24,
+        13, 18,  8, 12,  7,  6,  5, 63};
+
+    return lookup[z];
+}
+
+std::string square(int s) {
+  char cstr[3] {(char)('a' + s%8), (char)('8' - s/8), 0};
+  return std::string(cstr);
+}
+
 // double pawn pushes: the move flag will be the square in front of pawn before moving
 
 
@@ -234,32 +288,32 @@ public:
     fullmove = 1;
   }
 
-  uint64_t threat(bool white_to_move) const {
-    // A square is threatened if a pseudolegal move from the
-    // opposing side could target it were it unoccupied.
-    uint64_t occupied = white | black;
-    uint64_t empty = ~occupied;
-    uint64_t bb = 0;
-    uint64_t us = white_to_move ? white : black;
+  uint64_t checked(uint64_t them) const {
+    // return bitboard of attacks due to pieces
+    // on the bitboard `them`
 
-    bitapply(us & king, [&](uint64_t x) {
+    uint64_t bb = 0;
+    uint64_t empty = ~(white | black);
+
+    bitapply(them & king, [&](uint64_t x) {
       bb |= hopper(x, kingmoves);
     });
 
-    bitapply(us & (queen | rook), [&](uint64_t x) {
+    bitapply(them & (queen | rook), [&](uint64_t x) {
         bb |= slider(x, rookmoves, empty);
     });
 
-    bitapply(us & (queen | bishop), [&](uint64_t x) {
+    bitapply(them & (queen | bishop), [&](uint64_t x) {
         bb |= slider(x, bishopmoves, empty);
     });
 
-    bitapply(us & knight, [&](uint64_t x) {
+    bitapply(them & knight, [&](uint64_t x) {
         bb |= hopper(x, knightmoves);
     });
 
-    bitapply(us & pawn, [&](uint64_t x) {
-      bb |= hopper(x, white_to_move ? whitepawncaptures : blackpawncaptures);
+    auto pawncaptures = (them & white) ? whitepawncaptures : blackpawncaptures;
+    bitapply(them & pawn, [&](uint64_t x) {
+      bb |= hopper(x, pawncaptures);
     });
 
     return bb;
@@ -275,6 +329,8 @@ public:
     //
     // Therefore, it is pseudolegal to castle into check as long
     // as it is not *through* check.
+    //
+    // I might change this, though. Ha!
 
     MoveList moves;
     bool white_to_move = (ply % 2 == 0);
@@ -286,7 +342,7 @@ public:
     uint64_t doublepawnpush = white_to_move ? rank_4 : rank_5;
     uint64_t occupied = white | black;
     uint64_t empty = ~occupied;
-    uint64_t safe = ~threat(~white_to_move);
+    uint64_t safe = ~checked(them);
     uint64_t safe_and_empty = safe & empty; // the square we pass during castling must be in safe_and_empty
     uint64_t empty_or_them = empty | them;
 
@@ -321,13 +377,13 @@ public:
       add(x, Y & empty_or_them, standard);
     });
 
+    auto f = white_to_move ? n : s;
+    auto pawncaptures = white_to_move ? whitepawncaptures : blackpawncaptures;
     bitapply(us & pawn, [&](uint64_t x){
-      auto f = white_to_move ? n : s;
       add(x, f(f(x)) & f(empty) & empty & doublepawnpush, f(x));
       add(x, f(x) & empty & notendrank, pawnpush);
       add(x, f(x) & empty & endrank, promote);
-      auto S = white_to_move ? whitepawncaptures : blackpawncaptures;
-      auto Y = hopper(x, S);
+      auto Y = hopper(x, pawncaptures);
       add(x, Y & enpassant, enpassant);
       add(x, Y & them & notendrank, standard);
       add(x, Y & them & endrank, promote);
@@ -458,48 +514,44 @@ public:
     MoveList moves;
     MoveList pl_moves = pseudolegal();
     for (auto it = pl_moves.begin(); it != pl_moves.end(); ++ it) {
-      auto move = *it;
+      const auto& [source, target, flag] = *it;
+      // std::cout << "1. Considering: " << square(ntz(source)) << " " << square(ntz(target)) << "\n";
       // see if move puts us in check
       Engine after(*this); // fork a new position
-      after.move(move);
-      uint64_t threat_after = after.threat(~white_to_move);
+      after.move({source, target, flag});
       uint64_t us_after = white_to_move ? after.white : after.black;
-      uint64_t check_after = us_after & after.king & threat_after;
-      if (check_after == 0) moves.push_back(move);
+      uint64_t them_after = white_to_move ? after.black : after.white;
+      uint64_t checked_after = after.checked(them_after);
+
+      // std::cout << "Check A: ";
+      // bitapply(checked_after, [&](uint64_t x){
+      //   std::cout << square(ntz(x)) << " ";
+      // });
+      // std::cout << "\n";
+      //
+      // std::cout << "Check B: ";
+      // bitapply(us_after & after.king & checked_after, [&](uint64_t x){
+      //   std::cout << square(ntz(x)) << " ";
+      // });
+      // std::cout << "\n";
+
+      bool moved_into_check = (us_after & after.king & checked_after) != 0;
+
+      //std::cout << (moved_into_check ? "howdy" : "there") << "\n";
+      if (!moved_into_check) moves.push_back({source, target, flag});
     }
     return moves;
   }
 };
 
 
-int ntz(uint64_t x) {
-    // Return the number of trailing zeros in
-    // the binary representation of x.
-    // Assumes 0 <= x < 2**64.
-    constexpr uint64_t debruijn = 0x03f79d71b4cb0a89;
-    constexpr std::array<int,64> lookup =
-        {0, 47,  1, 56, 48, 27,  2, 60,
-        57, 49, 41, 37, 28, 16,  3, 61,
-        54, 58, 35, 52, 50, 42, 21, 44,
-        38, 32, 29, 23, 17, 11,  4, 62,
-        46, 55, 26, 59, 40, 36, 15, 53,
-        34, 51, 20, 43, 31, 22, 10, 45,
-        25, 39, 14, 33, 19, 30,  9, 24,
-        13, 18,  8, 12,  7,  6,  5, 63};
-    return lookup[(((debruijn*(x^(x-1))) >> 58) + 64)%64];
-}
-
-std::string square(int s) {
-  char cstr[3] {(char)('a' + s%8), (char)('8' - s/8), 0};
-  return std::string(cstr);
-}
 
 int main(int argc, char * argv []) {
   Engine e;
   MoveList moves = e.legal_moves();
+  std::cout << "Found " << moves.size() << " moves.\n";
   for (auto it=moves.begin(); it!=moves.end(); ++it) {
-    auto move = *it;
-    const auto& [source, target, flag] = move;
+    const auto& [source, target, flag] = *it;
     int s = ntz(source);
     int t = ntz(target);
     std::cout << square(s) << square(t) << "\n";
