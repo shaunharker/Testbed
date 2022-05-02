@@ -18,31 +18,50 @@ typedef std::tuple<uint64_t, uint64_t, uint64_t> Move;
 typedef std::vector<Move> MoveList;
 
 
+// castling rights
+// a1, h1 are move flags representing white castling rights 1<<56 1<<63
+// a8, h8 are move flags representing black castling rights 1<<0 1<<7
+
 // move flags
-constexpr uint64_t standard = uint64_t(1) << 1;
-constexpr uint64_t pawnpush = uint64_t(1) << 2;
-constexpr uint64_t castleQ = uint64_t(1) << 3;
-constexpr uint64_t castleK = uint64_t(1) << 4;
-constexpr uint64_t enpassant = uint64_t(1) << 5;
-constexpr uint64_t promoteQ = uint64_t(1) << 8;
-constexpr uint64_t promoteR = uint64_t(1) << 9;
-constexpr uint64_t promoteB = uint64_t(1) << 10;
-constexpr uint64_t promoteN = uint64_t(1) << 11;
+constexpr uint64_t captureflag = uint64_t(1) << 0;
+constexpr uint64_t checkflag = uint64_t(1) << 1;
+constexpr uint64_t mateflag = uint64_t(1) << 3;
+constexpr uint64_t standard = uint64_t(1) << 4;
+constexpr uint64_t pawnpush = uint64_t(1) << 5;
+constexpr uint64_t castleQ = uint64_t(1) << 6;
+constexpr uint64_t castleK = uint64_t(1) << 7;
+constexpr uint64_t enpassant = uint64_t(1) << 8;
+constexpr uint64_t promoteQ = uint64_t(1) << 9;
+constexpr uint64_t promoteR = uint64_t(1) << 10;
+constexpr uint64_t promoteB = uint64_t(1) << 11;
+constexpr uint64_t promoteN = uint64_t(1) << 12;
 constexpr uint64_t promote = promoteQ | promoteR | promoteB | promoteN;
 
+int popcnt(uint64_t x) {
+  // Return the number of 1 bits in binary representation of x.
+  // Assumes 0 <= x < 2**64.
+  // (todo: is this a processor instruction now?)
+  uint64_t k1 = 0x5555555555555555; uint64_t k2 = 0x3333333333333333;
+  uint64_t k4 = 0x0f0f0f0f0f0f0f0f; uint64_t kf = 0x0101010101010101;
+  x = x - ((x >> 1) & k1);
+  x = (x & k2) + ((x >> 2) & k2);
+  x = (x + (x >> 4)) & k4;
+  x = (x * kf) >> 56;
+  return x;
+}
 
 int ntz(uint64_t x) {
     // We return the number of trailing zeros in
     // the binary representation of x.
     //
-    // We have that 0 <= x < 2**64.
+    // We have that 0 <= x < 2^64.
     //
     // We begin by applying a function sensitive only
     // to the least significant bit (lsb) of x:
     //
     //   x -> x^(x-1)  e.g. 0b11001000 -> 0b00001111
     //
-    // Observe that x^(x-1) == 2**(ntz(x)+1) - 1.
+    // Observe that x^(x-1) == 2^(ntz(x)+1) - 1.
 
     uint64_t y = x^(x-1);
 
@@ -64,20 +83,24 @@ int ntz(uint64_t x) {
     // See https://en.wikipedia.org/wiki/De_Bruijn_sequence#Finding_least-_or_most-significant_set_bit_in_a_word
     //
     // So we just use a look-up table of all 64
-    // possible answers. Easy peasy.
+    // possible answers, which have been precomputed in
+    // advance by the the sort of people who write
+    // chess engines in their spare time:
 
-    constexpr std::array<int,64> lookup =
-        {0, 47,  1, 56, 48, 27,  2, 60,
+    constexpr std::array<int,64> lookup = {
+         0, 47,  1, 56, 48, 27,  2, 60,
         57, 49, 41, 37, 28, 16,  3, 61,
         54, 58, 35, 52, 50, 42, 21, 44,
         38, 32, 29, 23, 17, 11,  4, 62,
         46, 55, 26, 59, 40, 36, 15, 53,
         34, 51, 20, 43, 31, 22, 10, 45,
         25, 39, 14, 33, 19, 30,  9, 24,
-        13, 18,  8, 12,  7,  6,  5, 63};
+        13, 18,  8, 12,  7,  6,  5, 63
+    };
 
     return lookup[z];
 }
+
 
 std::string square(int s) {
   char cstr[3] {(char)('a' + s%8), (char)('8' - s/8), 0};
@@ -289,33 +312,17 @@ public:
   }
 
   uint64_t checked(uint64_t them) const {
-    // return bitboard of attacks due to pieces
-    // on the bitboard `them`
-
+    // return bitboard of attacks due to pieces on the bitboard `them`
     uint64_t bb = 0;
     uint64_t empty = ~(white | black);
-
-    bitapply(them & king, [&](uint64_t x) {
-      bb |= hopper(x, kingmoves);
-    });
-
+    bitapply(them & king, [&](uint64_t x) {bb |= hopper(x, kingmoves);});
     bitapply(them & (queen | rook), [&](uint64_t x) {
-        bb |= slider(x, rookmoves, empty);
-    });
-
+      bb |= slider(x, rookmoves, empty);});
     bitapply(them & (queen | bishop), [&](uint64_t x) {
-        bb |= slider(x, bishopmoves, empty);
-    });
-
-    bitapply(them & knight, [&](uint64_t x) {
-        bb |= hopper(x, knightmoves);
-    });
-
+      bb |= slider(x, bishopmoves, empty);});
+    bitapply(them & knight, [&](uint64_t x) {bb |= hopper(x, knightmoves);});
     auto pawncaptures = (them & white) ? whitepawncaptures : blackpawncaptures;
-    bitapply(them & pawn, [&](uint64_t x) {
-      bb |= hopper(x, pawncaptures);
-    });
-
+    bitapply(them & pawn, [&](uint64_t x) {bb |= hopper(x, pawncaptures);});
     return bb;
   }
 
@@ -331,7 +338,10 @@ public:
     // as it is not *through* check.
     //
     // I might change this, though. Ha!
-
+    //
+    // Another comment: capture flags and check flags remain off
+    //                  during this stage or else there is trouble
+    //                  in the way we create pawn promotions
     MoveList moves;
     bool white_to_move = (ply % 2 == 0);
     uint64_t us = white_to_move ? white : black;
@@ -399,6 +409,15 @@ public:
     uint64_t backrank = white_to_move ? rank_1 : rank_8;
     uint64_t endrank = white_to_move ? rank_8 : rank_1;
     const auto& [source, target, flag] = m;
+
+    // handle unset flags
+    // 1. assume promotion is queen if applicable
+    // 2. detect possible en passant
+    // 3. detect possible kingside castle
+    // 4. detect possible queenside castle
+    // 5. set flags properly
+
+    // todo
 
     // handle target square
     // 1. if empty, no problem
@@ -499,7 +518,7 @@ public:
     }
   }
 
-  MoveList legal_moves() const {
+  MoveList legal_moves(bool check_for_mates=true) const {
     // A move is legal if:
     //   1. It is pseudolegal
     //   2. If performed, then there isn't a pseudolegal king capture
@@ -508,53 +527,85 @@ public:
     auto them = white_to_move ? black : white;
     auto backrank = white_to_move ? rank_1 : rank_8;
     auto endrank = white_to_move ? rank_8 : rank_1;
-
-    //check = us & king & threat(~white_to_move);
-
     MoveList moves;
     MoveList pl_moves = pseudolegal();
-    for (auto it = pl_moves.begin(); it != pl_moves.end(); ++ it) {
-      const auto& [source, target, flag] = *it;
-      // std::cout << "1. Considering: " << square(ntz(source)) << " " << square(ntz(target)) << "\n";
-      // see if move puts us in check
+    for (auto [source, target, flag] : pl_moves) {
+      // We filter out moves that leave us in check and also
+      // add flags for whether a legal move is a check or a mate.
       Engine after(*this); // fork a new position
       after.move({source, target, flag});
       uint64_t us_after = white_to_move ? after.white : after.black;
       uint64_t them_after = white_to_move ? after.black : after.white;
-      uint64_t checked_after = after.checked(them_after);
-
-      // std::cout << "Check A: ";
-      // bitapply(checked_after, [&](uint64_t x){
-      //   std::cout << square(ntz(x)) << " ";
-      // });
-      // std::cout << "\n";
-      //
-      // std::cout << "Check B: ";
-      // bitapply(us_after & after.king & checked_after, [&](uint64_t x){
-      //   std::cout << square(ntz(x)) << " ";
-      // });
-      // std::cout << "\n";
-
-      bool moved_into_check = (us_after & after.king & checked_after) != 0;
-
-      //std::cout << (moved_into_check ? "howdy" : "there") << "\n";
-      if (!moved_into_check) moves.push_back({source, target, flag});
+      if (popcnt(them_after) < popcnt(them)) flag |= captureflag;
+      bool moved_into_check = (us_after & after.king & after.checked(them_after)) != 0;
+      bool move_is_a_check = (them_after & after.king & after.checked(us_after)) != 0;
+      if (!moved_into_check) {
+        if (move_is_a_check) {
+          flag |= checkflag;
+          if (check_for_mates && (after.legal_moves(false).size() == 0)) {
+            flag |= mateflag;
+          }
+        }
+        moves.push_back({source, target, flag});
+      }
     }
     return moves;
   }
 };
 
-
-
 int main(int argc, char * argv []) {
   Engine e;
   MoveList moves = e.legal_moves();
-  std::cout << "Found " << moves.size() << " moves.\n";
-  for (auto it=moves.begin(); it!=moves.end(); ++it) {
-    const auto& [source, target, flag] = *it;
+  bool uci_mode = false;
+  for (const auto& [source, target, flag] : moves) {
     int s = ntz(source);
     int t = ntz(target);
-    std::cout << square(s) << square(t) << "\n";
+    if (uci_mode) {
+      std::cout << square(s) << square(t) << " ";
+    } else {
+      bool capture = flag & captureflag;
+      if (source & e.king) {
+        std::cout << "K";
+      } else if (source & e.queen) {
+        std::cout << "Q";
+      } else if (source & e.bishop) {
+        std::cout << "B";
+      } else if (source & e.knight) {
+        std::cout << "N";
+      } else if (source & e.rook) {
+        std::cout << "R";
+      } else {
+        if (flag & captureflag) {
+          // pawn capture
+          std::cout << square(s)[0];
+        }
+      }
+      if (capture) {
+        std::cout << "x";
+      }
+      std::cout << square(t);
+      if (flag & promoteQ) {
+        std::cout << "=Q";
+      }
+      if (flag & promoteR) {
+        std::cout << "=R";
+      }
+      if (flag & promoteB) {
+        std::cout << "=B";
+      }
+      if (flag & promoteN) {
+        std::cout << "=N";
+      }
+      if (flag & checkflag) {
+        if (flag & mateflag) {
+          std::cout << "#";
+        } else {
+          std::cout << "+";
+        }
+      }
+      std::cout << " ";
+    }
   }
+  std::cout << "\n";
   return 0;
 }
