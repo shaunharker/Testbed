@@ -10,6 +10,8 @@
 #include <iostream>
 #include <functional>
 #include <sstream>
+#include <chrono>
+#include <thread>
 
 typedef std::function<uint64_t(uint64_t)> Fun;
 typedef std::array<Fun,2> FunList2;
@@ -811,10 +813,10 @@ int main(int argc, char * argv []) {
   bool uci_mode = false;
   std::deque<std::string> inputs;
   std::vector<std::string> game;
-  Engine e;
+  Engine engine;
   while (true) {
     // display board
-    std::cout << "Board:\n\n" << e.board() << "\n";
+    std::cout << "Board:\n\n" << engine.board() << "\n";
     // display game
     std::cout << "Game: ";
     for (auto move : game) {
@@ -824,32 +826,52 @@ int main(int argc, char * argv []) {
 
     // display legal moves
     std::cout << "Legal Moves: ";
-    std::vector<std::string> moves = e.legal_moves();
-    for (auto s : moves) std::cout << s << " ";
+    std::vector<std::string> moves = engine.legal_moves();
+    for (auto move : moves) std::cout << move << " ";
     std::cout << "\b\n";
 
     // Read moves from stdin
-    if (inputs.size() == 0) {
-      std::cout << "> ";
+    bool first = true;
+    while (inputs.size() == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      if (first) {
+        std::cout << "> ";
+        first = false;
+      } else {
+        return 0;
+      }
       std::string user;
       std::cin >> user;
       std::istringstream ss(user);
       std::string item;
       while(std::getline(ss, item, ' ')){
-        inputs.push_back(item);
+        if (item == "new") {
+          game.clear();
+          engine = Engine();
+        } else {
+          inputs.push_back(item);
+        }
       }
     }
 
+    //if (inputs.size() > 0) {
     std::string move = inputs.front();
     inputs.pop_front();
-
     if ( move == "" ) {
+      std::cout << "Unexpected doom.\n";
       return 0;
-    } else if (e.move(move)) {
+    } else if (engine.move(move)) {
       game.push_back(move);
     } else {
-      std::cout << "Move rejected!\n";
+      // rejected move, probably a new game or bad data.
+      // goal is to skip to next recognizable game.
+      if (game.size()) {
+        game.clear();
+        inputs.push_front(move); // give it one more shot with new engine in case its the start of a new game.
+      }
+      engine = Engine();
     }
+    //}
   }
   return 0;
 }
