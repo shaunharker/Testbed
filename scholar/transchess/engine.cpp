@@ -5,10 +5,11 @@
 
 #include <array>
 #include <vector>
+#include <deque>
 #include <cstdint>
 #include <iostream>
 #include <functional>
-
+#include <sstream>
 
 typedef std::function<uint64_t(uint64_t)> Fun;
 typedef std::array<Fun,2> FunList2;
@@ -23,18 +24,18 @@ typedef std::vector<Move> MoveList;
 // a8, h8 are move flags representing black castling rights 1<<0 1<<7
 
 // move flags
-constexpr uint64_t captureflag = uint64_t(1) << 0;
-constexpr uint64_t checkflag = uint64_t(1) << 1;
+constexpr uint64_t captureflag = uint64_t(1) << 1;
+constexpr uint64_t checkflag = uint64_t(1) << 2;
 constexpr uint64_t mateflag = uint64_t(1) << 3;
 constexpr uint64_t standard = uint64_t(1) << 4;
 constexpr uint64_t pawnpush = uint64_t(1) << 5;
 constexpr uint64_t castleQ = uint64_t(1) << 6;
-constexpr uint64_t castleK = uint64_t(1) << 7;
-constexpr uint64_t enpassant = uint64_t(1) << 8;
-constexpr uint64_t promoteQ = uint64_t(1) << 9;
-constexpr uint64_t promoteR = uint64_t(1) << 10;
-constexpr uint64_t promoteB = uint64_t(1) << 11;
-constexpr uint64_t promoteN = uint64_t(1) << 12;
+constexpr uint64_t castleK = uint64_t(1) << 8;
+constexpr uint64_t enpassantflag = uint64_t(1) << 9;
+constexpr uint64_t promoteQ = uint64_t(1) << 10;
+constexpr uint64_t promoteR = uint64_t(1) << 11;
+constexpr uint64_t promoteB = uint64_t(1) << 12;
+constexpr uint64_t promoteN = uint64_t(1) << 13;
 constexpr uint64_t promote = promoteQ | promoteR | promoteB | promoteN;
 
 int popcnt(uint64_t x) {
@@ -212,8 +213,8 @@ constexpr uint64_t rank_3 = a3 + b3 + c3 + d3 + e3 + f3 + g3 + h3;
 constexpr uint64_t rank_2 = a2 + b2 + c2 + d2 + e2 + f2 + g2 + h2;
 constexpr uint64_t rank_1 = a1 + b1 + c1 + d1 + e1 + f1 + g1 + h1;
 
-auto w(uint64_t x) -> uint64_t {return (x << 1) & ~(file_a);}
-auto e(uint64_t x) -> uint64_t {return (x >> 1) & ~(file_h);}
+auto w(uint64_t x) -> uint64_t {return (x >> 1) & ~(file_h);}
+auto e(uint64_t x) -> uint64_t {return (x << 1) & ~(file_a);}
 auto s(uint64_t x) -> uint64_t {return (x << 8) & ~(rank_8);}
 auto n(uint64_t x) -> uint64_t {return (x >> 8) & ~(rank_1);}
 auto nw(uint64_t x) -> uint64_t {return n(w(x));}
@@ -239,8 +240,7 @@ const FunList2 blackpawncaptures {sw, se};
 template <typename Fs>
 auto hopper(uint64_t x, Fs S) -> uint64_t {
   uint64_t bb = 0;
-  for (auto it = S.begin(); it != S.end(); ++ it) {
-    auto f = *it;
+  for (auto f : S) {
     bb |= f(x);
   }
   return bb;
@@ -294,7 +294,9 @@ public:
   uint64_t enpassant;
   uint64_t halfmove;
   uint64_t fullmove;
-
+  mutable bool cache_is_computed;
+  mutable std::vector<Move> _moves;
+  mutable std::vector<std::string> _sanmoves;
   Engine(){
     white = rank_1 | rank_2;
     black = rank_7 | rank_8;
@@ -309,6 +311,7 @@ public:
     enpassant = 0;
     halfmove = 0;
     fullmove = 1;
+    cache_is_computed = false;
   }
 
   uint64_t checked(uint64_t them) const {
@@ -342,7 +345,7 @@ public:
     // Another comment: capture flags and check flags remain off
     //                  during this stage or else there is trouble
     //                  in the way we create pawn promotions
-    MoveList moves;
+    MoveList pseudomoves;
     bool white_to_move = (ply % 2 == 0);
     uint64_t us = white_to_move ? white : black;
     uint64_t them = white_to_move ? black : white;
@@ -359,7 +362,7 @@ public:
     auto add = [&](uint64_t source, uint64_t targets, uint64_t flags) {
       bitapply(targets, [&](uint64_t target){
         bitapply(flags, [&](uint64_t flag) {
-          moves.push_back({source, target, flag});
+          pseudomoves.push_back({source, target, flag});
         });
       });
     };
@@ -368,8 +371,8 @@ public:
       auto Y = hopper(x, kingmoves);
       add(x, Y & empty_or_them, standard);
       uint64_t castlerooks = us & rook & castling;
-      add(x, e(e(e(castlerooks))) & e(e(empty)) & e(empty) & empty & w(safe_and_empty) & w(w(x)), castleQ);
-      add(x, e(e(x)) & e(safe_and_empty) & empty & w(empty) & w(w(castlerooks)), castleK);
+      add(x, e(e(castlerooks)) & e(empty) & empty & w(safe_and_empty) & w(w(x)), castleQ);
+      add(x, e(e(x)) & e(safe_and_empty) & empty & w(castlerooks), castleK);
     });
 
     bitapply(us & (queen | rook), [&](uint64_t x){
@@ -394,15 +397,32 @@ public:
       add(x, f(x) & empty & notendrank, pawnpush);
       add(x, f(x) & empty & endrank, promote);
       auto Y = hopper(x, pawncaptures);
-      add(x, Y & enpassant, enpassant);
+      add(x, Y & enpassant, enpassantflag);
       add(x, Y & them & notendrank, standard);
       add(x, Y & them & endrank, promote);
     });
 
-    return moves;
+    return pseudomoves;
   }
 
-  void move(Move m) {
+  bool move(std::string s) {
+    // linear scan to find move (since list is discarded
+    // afterwards):
+    if (!cache_is_computed) legal_moves();
+    int i=0;
+    for (; i<_sanmoves.size(); ++i) {
+      if (s == _sanmoves[i]) {
+        _move(_moves[i]);
+        return true;
+      }
+    }
+    if (i == _sanmoves.size()) {
+      std::cerr << "move: '" << s << "' is not a legal move.\n";
+    }
+    return false;
+  }
+
+  void _move(Move m) {
     bool white_to_move = (ply % 2 == 0);
     uint64_t us = white_to_move ? white : black;
     uint64_t them = white_to_move ? black : white;
@@ -424,6 +444,7 @@ public:
     // 2. if piece, remove it from its bitboard
     // 3. remove from `them`
     // 4. if an enpassant target, capture en passant
+
     uint64_t mask = ~target;
     them &= mask;
     queen &= mask;
@@ -431,8 +452,8 @@ public:
     bishop &= mask;
     knight &= mask;
     pawn &= mask;
-    if (flag == enpassant) {
-      // en passant capture. "notsofast" is uint64_t(1) << i,
+    if (flag & enpassantflag) {
+      // en passant capture. "notsofast" is 1 << i,
       // where i in {0, ..., 63} is the square the
       // pawn being captured occupies.
       uint64_t notsofast = (white_to_move ? s : n)(target);
@@ -468,35 +489,35 @@ public:
     // handle promotions
     uint64_t promoted = pawn & endrank;
     pawn ^= promoted;
+
     if (promoted) {
-      switch(flag) {
-        case promoteQ:
-          queen ^= promoted;
-        case promoteR:
-          rook ^= promoted;
-        case promoteB:
-          bishop ^= promoted;
-        case promoteN:
-          knight ^= promoted;
+      if (flag & promoteQ) {
+        queen ^= promoted;
+      } else if (flag & promoteR) {
+        rook ^= promoted;
+      } else if (flag & promoteB) {
+        bishop ^= promoted;
+      } else if (flag & promoteN) {
+        knight ^= promoted;
       }
     }
 
     // handle castling rooks
-    if (flag == castleK) {
+    if (flag & castleK) {
         uint64_t rook_mover = e(target) | w(target);
         rook ^= rook_mover;
         us ^= rook_mover;
     }
 
-    if (flag == castleQ) {
+    if (flag & castleQ) {
         uint64_t rook_mover = w(w(target)) | e(target);
         rook ^= rook_mover;
         us ^= rook_mover;
     }
 
-    // handle en passant flags
+    // handle en passant
     if (flag & (white_to_move ? rank_3 : rank_6)) {
-        enpassant = flag;
+        enpassant = flag; // flag is on square behind double pushed pawn
     } else {
         enpassant = 0;
     }
@@ -506,22 +527,38 @@ public:
 
     // handle half-move clock
     halfmove += 1;
-    if ((target & them != 0) or
-        (flag == enpassant) or
+    if ((target & them != 0) ||
+        (flag & enpassant) ||
         ((flag & (rank_3 | rank_6 | pawnpush)) != 0)) {
       halfmove = 0;
     }
 
     // handle full-move number
     if (!white_to_move) {
-        fullmove += 1;
+      fullmove += 1;
     }
+
+    // set white and black
+    white = white_to_move ? us : them;
+    black = white_to_move ? them : us;
+
+    // clear the cache
+    cache_is_computed = false;
+    _moves.clear();
+    _sanmoves.clear();
   }
 
-  MoveList legal_moves(bool check_for_mates=true) const {
+  MoveList _legal_moves(bool only_mate_check=false) const {
     // A move is legal if:
     //   1. It is pseudolegal
     //   2. If performed, then there isn't a pseudolegal king capture
+
+    // Note:
+    // The "check_for_mates" feature is used like this:
+    // the function calls itself with it set to false
+    // so that it doesn't infinitely recurse trying to
+    // evaluate the legal most list of the mated position.
+
     bool white_to_move = (ply % 2 == 0);
     auto us = white_to_move ? white : black;
     auto them = white_to_move ? black : white;
@@ -533,7 +570,7 @@ public:
       // We filter out moves that leave us in check and also
       // add flags for whether a legal move is a check or a mate.
       Engine after(*this); // fork a new position
-      after.move({source, target, flag});
+      after._move({source, target, flag});
       uint64_t us_after = white_to_move ? after.white : after.black;
       uint64_t them_after = white_to_move ? after.black : after.white;
       if (popcnt(them_after) < popcnt(them)) flag |= captureflag;
@@ -542,70 +579,285 @@ public:
       if (!moved_into_check) {
         if (move_is_a_check) {
           flag |= checkflag;
-          if (check_for_mates && (after.legal_moves(false).size() == 0)) {
+          if (!only_mate_check && (after._legal_moves(true).size() == 0)) {
             flag |= mateflag;
           }
         }
         moves.push_back({source, target, flag});
-      }
-    }
-    return moves;
-  }
-};
-
-int main(int argc, char * argv []) {
-  Engine e;
-  MoveList moves = e.legal_moves();
-  bool uci_mode = false;
-  for (const auto& [source, target, flag] : moves) {
-    int s = ntz(source);
-    int t = ntz(target);
-    if (uci_mode) {
-      std::cout << square(s) << square(t) << " ";
-    } else {
-      bool capture = flag & captureflag;
-      if (source & e.king) {
-        std::cout << "K";
-      } else if (source & e.queen) {
-        std::cout << "Q";
-      } else if (source & e.bishop) {
-        std::cout << "B";
-      } else if (source & e.knight) {
-        std::cout << "N";
-      } else if (source & e.rook) {
-        std::cout << "R";
-      } else {
-        if (flag & captureflag) {
-          // pawn capture
-          std::cout << square(s)[0];
+        if (only_mate_check) {
+          return moves;
         }
       }
-      if (capture) {
-        std::cout << "x";
-      }
-      std::cout << square(t);
-      if (flag & promoteQ) {
-        std::cout << "=Q";
-      }
-      if (flag & promoteR) {
-        std::cout << "=R";
-      }
-      if (flag & promoteB) {
-        std::cout << "=B";
-      }
-      if (flag & promoteN) {
-        std::cout << "=N";
+    }
+    _moves = moves;
+    return moves;
+  }
+
+  std::vector<std::string> legal_moves() {
+    if (cache_is_computed) {
+      return _sanmoves;
+    }
+    _moves = _legal_moves(false);
+    std::vector<std::string> almost_sanmoves;
+    for (const auto& [source, target, flag] : _moves) {
+      std::ostringstream ss;
+      if (flag & castleQ) {
+        ss << "O-O-O";
+      } else if (flag & castleK) {
+        ss << "O-O";
+      } else {
+        bool capture = flag & captureflag;
+        if (source & king) {
+          ss << "K";
+        } else if (source & queen) {
+          ss << "Q";
+        } else if (source & bishop) {
+          ss << "B";
+        } else if (source & knight) {
+          ss << "N";
+        } else if (source & rook) {
+          ss << "R";
+        }
+        // disambiguation
+        ss << square(ntz(source));
+        if (capture) {
+          ss << "x";
+        }
+        ss << square(ntz(target));
+        if (flag & promoteQ) {
+          ss << "=Q";
+        }
+        if (flag & promoteR) {
+          ss << "=R";
+        }
+        if (flag & promoteB) {
+          ss << "=B";
+        }
+        if (flag & promoteN) {
+          ss << "=N";
+        }
       }
       if (flag & checkflag) {
         if (flag & mateflag) {
-          std::cout << "#";
+          ss << "#";
         } else {
-          std::cout << "+";
+          ss << "+";
         }
       }
-      std::cout << " ";
+      almost_sanmoves.push_back(ss.str());
+    }
+
+    // remove unnecessary disambiguation
+    for (auto move1 : almost_sanmoves) {
+      std::ostringstream ss;
+      if (move1[0] == 'O') {
+        ss << move1;
+      } else if (move1[0] == 'K') {
+        ss << 'K' << move1.substr(3, std::string::npos);
+      } else if (move1[0] == 'Q' || move1[0] == 'R' || move1[0] == 'B' || move1[0] == 'N') {
+        bool piece_ambiguity = false;
+        bool file_ambiguity = false;
+        bool rank_ambiguity = false;
+        for (auto move2 : almost_sanmoves) {
+          // different source?
+          if (move1.substr(1,2) == move2.substr(1,2)) continue;
+          // same piece type?
+          if (move1[0] != move2[0]) continue;
+          // same target square?
+          if (move1[3] == 'x') {
+            if (move2[3] != 'x') continue;
+            if ((move1[4] != move2[4]) || (move1[5] != move2[5])) {
+              continue;
+            }
+          } else {
+            if ((move1[3] != move2[3]) || (move1[4] != move2[4])) {
+              continue;
+            }
+          }
+          piece_ambiguity = true;
+          // can we not disambiguate by file?
+          if ((move1[1] == move2[1]) && (move1[2] != move2[2])) {
+            file_ambiguity = true;
+          }
+          // can we not disambiguate by rank?
+          if ((move1[1] != move2[1]) && (move1[2] == move2[2])) {
+            rank_ambiguity = true;
+          }
+        }
+        ss << move1[0];
+        if (piece_ambiguity) {
+          if (file_ambiguity) {
+            if (rank_ambiguity) {
+              ss << move1.substr(1, std::string::npos);
+            } else {
+              ss << move1.substr(2, std::string::npos);
+            }
+          } else {
+            ss << move1[1] << move1.substr(3, std::string::npos);
+          }
+        } else {
+          ss << move1.substr(3, std::string::npos);
+        }
+      } else {
+        // pawns
+        if (move1[2] == 'x') {
+          ss << move1[0] << move1.substr(2, std::string::npos);
+        } else {
+          ss << move1.substr(2, std::string::npos);
+        }
+      }
+      _sanmoves.push_back(ss.str());
+    }
+    cache_is_computed = true;
+    return _sanmoves;
+  }
+
+  std::string board() {
+    // display board
+    uint64_t s = 1;
+    std::ostringstream ss;
+    for (int i=0; i<8; ++i) {
+      for (int j=0; j<8; ++j) {
+        if (s & white) {
+          if (s & king) {
+            ss << "K";
+          } else if (s & queen) {
+            ss << "Q";
+          } else if (s & bishop) {
+            ss << "B";
+          } else if (s & knight) {
+            ss << "N";
+          } else if (s & rook) {
+            ss << "R";
+          } else if (s & pawn) {
+            ss << "P";
+          } else {
+            ss << "?"; // debug
+          }
+        } else if (s & black) {
+          if (s & king) {
+            ss << "k";
+          } else if (s & queen) {
+            ss << "q";
+          } else if (s & bishop) {
+            ss << "b";
+          } else if (s & knight) {
+            ss << "n";
+          } else if (s & rook) {
+            ss << "r";
+          } else if (s & pawn) {
+            ss << "p";
+          }
+        } else {
+          ss << ".";
+        }
+        s <<= 1;
+      }
+      ss << "\n";
+    }
+    ss << "\n";
+    return ss.str();
+  }
+
+  std::string fen() {
+    // display board
+    uint64_t s = 1;
+    std::ostringstream ss;
+    for (int i=0; i<8; ++i) {
+      for (int j=0; j<8; ++j) {
+        if (s & white) {
+          if (s & king) {
+            ss << "K";
+          } else if (s & queen) {
+            ss << "Q";
+          } else if (s & bishop) {
+            ss << "B";
+          } else if (s & knight) {
+            ss << "N";
+          } else if (s & rook) {
+            ss << "R";
+          } else if (s & pawn) {
+            ss << "P";
+          } else {
+            ss << "?"; // debug
+          }
+        } else if (s & black) {
+          if (s & king) {
+            ss << "k";
+          } else if (s & queen) {
+            ss << "q";
+          } else if (s & bishop) {
+            ss << "b";
+          } else if (s & knight) {
+            ss << "n";
+          } else if (s & rook) {
+            ss << "r";
+          } else if (s & pawn) {
+            ss << "p";
+          }
+        } else {
+          ss << ".";
+        }
+        s <<= 1;
+      }
+      ss << "\n";
+    }
+    return ss.str();
+  }
+
+};
+
+int main(int argc, char * argv []) {
+  bool uci_mode = false;
+  std::deque<std::string> inputs;
+  std::vector<std::string> game;
+  Engine e;
+  while (true) {
+    // display board
+    std::cout << "Board:\n\n" << e.board() << "\n";
+    // display game
+    std::cout << "Game: ";
+    for (auto move : game) {
+      std::cout << move << " ";
+    }
+    std::cout << "\b\n\n";
+
+    // display legal moves
+    std::cout << "Legal Moves: ";
+    std::vector<std::string> moves = e.legal_moves();
+    for (auto s : moves) std::cout << s << " ";
+    std::cout << "\b\n";
+
+    // Read moves from stdin
+    if (inputs.size() == 0) {
+      std::cout << "> ";
+      std::string user;
+      std::cin >> user;
+      std::istringstream ss(user);
+      std::string item;
+      while(std::getline(ss, item, ' ')){
+        inputs.push_back(item);
+      }
+    }
+
+    std::string move = inputs.front();
+    inputs.pop_front();
+
+    if ( move == "" ) {
+      return 0;
+    } else if (e.move(move)) {
+      game.push_back(move);
+    } else {
+      std::cout << "Move rejected!\n";
     }
   }
-  std::cout << "\n";
   return 0;
 }
+
+/*
+
+Test game:
+
+d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Be2 O-O Bg5 c5 d5 a6 a4 e6 Qd2 exd5 exd5 Re8 h3 Qa5 Nf3 b5 Bxf6 Bxf6 Ne4 Qxd2+ Nfxd2 Bxb2 Ra2 Be5 f4 Bg7 Nxd6 Rd8 Nxc8 Rxc8 axb5 a5 Ne4 Nd7 Kd2 Re8 Bd3 Bd4 Rf1 Ra7 Rf3 Kf8 Nd6 Rd8 b6 Ra6 Nb5 Bg7 b7 Rb8 Nc7 Ra7 Nb5 Ra6 Be2 Bf6 Nc7 Ra7 Nb5 Ra6 Rfa3 Bd8 d6 Rxb7 Bf3 Rb8 Kd3 Nf6 Rd2 Ne8 Kc2 Rbb6 Rad3 h6 Rd5 a4 Kb1 a3 Ka2 Ra4 Rxc5 Rb8 d7 Ke7 Re5+ Kf6 dxe8=N#
+
+*/
