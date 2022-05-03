@@ -12,6 +12,7 @@
 #include <sstream>
 #include <chrono>
 #include <thread>
+#include <cmath>
 
 typedef std::function<uint64_t(uint64_t)> Fun;
 typedef std::array<Fun,2> FunList2;
@@ -319,7 +320,10 @@ public:
   uint64_t checked(uint64_t them) const {
     // return bitboard of attacks due to pieces on the bitboard `them`
     uint64_t bb = 0;
-    uint64_t empty = ~(white | black);
+    uint64_t occupied = white | black;
+    uint64_t empty = ~occupied;
+    uint64_t our_king = king & ~them;
+    empty ^= our_king; // a key gotcha
     bitapply(them & king, [&](uint64_t x) {bb |= hopper(x, kingmoves);});
     bitapply(them & (queen | rook), [&](uint64_t x) {
       bb |= slider(x, rookmoves, empty);});
@@ -419,7 +423,9 @@ public:
       }
     }
     if (i == _sanmoves.size()) {
-      std::cerr << "move: '" << s << "' is not a legal move.\n";
+      std::cerr << "\nNote: '" << s << "' is not a legal move.\nThe current legal moves are ";
+      for (auto move : _sanmoves) std::cerr << move << " ";
+      std::cerr << "\b\n\n";
     }
     return false;
   }
@@ -814,6 +820,9 @@ int main(int argc, char * argv []) {
   std::deque<std::string> inputs;
   std::vector<std::string> game;
   Engine engine;
+  double geomsum = 0.0;
+  double plycnt = 0.0;
+  double arithsum = 0.0;
   while (true) {
     // display board
     std::cout << "Board:\n\n" << engine.board() << "\n";
@@ -828,16 +837,27 @@ int main(int argc, char * argv []) {
     std::cout << "Legal Moves: ";
     std::vector<std::string> moves = engine.legal_moves();
     for (auto move : moves) std::cout << move << " ";
-    std::cout << "\b\n";
+    std::cout << "\b\n\n";
 
+    if (moves.size() == 0) {
+      game.clear();
+      engine = Engine();
+    } else {
+      geomsum += std::log(moves.size());
+      arithsum += moves.size();
+      plycnt += 1.0;
+    }
     // Read moves from stdin
     bool first = true;
+    std::cout << "> ";
     while (inputs.size() == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      //std::this_thread::sleep_for(std::chrono::milliseconds(10));
       if (first) {
-        std::cout << "> ";
         first = false;
       } else {
+        //std::cerr << "Total number of moves considered: " << arithsum << "\n";
+        //std::cerr << "Arithmetic average number of moves = " << arithsum/plycnt << "\n";
+        //std::cerr << "Geometric average number of moves (branching factor) = " << std::exp(geomsum/plycnt) << "\n";
         return 0;
       }
       std::string user;
@@ -845,9 +865,10 @@ int main(int argc, char * argv []) {
       std::istringstream ss(user);
       std::string item;
       while(std::getline(ss, item, ' ')){
-        if (item == "new") {
+        if (item == "new" || item == "0-1" || item == "1-0" || item == "1/2-1/2" || item == "...") {
           game.clear();
           engine = Engine();
+          first = true;
         } else {
           inputs.push_back(item);
         }
@@ -857,21 +878,23 @@ int main(int argc, char * argv []) {
     //if (inputs.size() > 0) {
     std::string move = inputs.front();
     inputs.pop_front();
-    if ( move == "" ) {
-      std::cout << "Unexpected doom.\n";
-      return 0;
-    } else if (engine.move(move)) {
+
+    if (engine.move(move)) {
+      //std::cerr << ".[" << move << "]";
       game.push_back(move);
     } else {
-      // rejected move, probably a new game or bad data.
-      // goal is to skip to next recognizable game.
-      if (game.size()) {
-        game.clear();
+      if (!game.empty()) {
         inputs.push_front(move); // give it one more shot with new engine in case its the start of a new game.
+      } else {
+        // No solution right now but to just plow on
+        // through hoping to get back on track with
+        // valid games soon enough.
       }
+      for (auto m : game) std::cerr << m << " ";
+      //std::cerr << "$\n\n";
+      game.clear();
       engine = Engine();
     }
-    //}
   }
   return 0;
 }
