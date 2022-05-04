@@ -3,23 +3,31 @@ import numpy as np
 from subprocess import Popen, PIPE
 import json
 from typing import List
+import time
+import functools
+from chessboard import Chessboard
 
-def analyze(games: List[str]):
-    proc = Popen(["/home/sharker/github/scholar/scholar/transchess/engine", "full"],
-        stdin=PIPE, stdout=PIPE, stderr=PIPE, text=True)
-    games = games.strip() + " ..."
-    out, err = proc.communicate(input=games)
-    return [json.loads(x) for x in out.splitlines()]
 
 bytes_to_tensor = lambda x: torch.tensor(np.frombuffer(
     bytes(x, encoding='utf8'), dtype=np.uint8),
     dtype=torch.long, device="cuda")
 
 
-class Chessboard:
+class TargetCalculator:
     def __init__(self, game=""):
-        self.data = analyze(game)[0]
         self.moves = game.split()
+        self.data = {"game": "", "legal": [], "fen" : []}
+        board = Chessboard()
+        self.data["legal"].append(board.legal())
+        self.data["fen"].append(board.fen())
+        for move in self.moves:
+            if board.move(move):
+                self.data["game"].append(move)
+                self.data["legal"].append(board.legal())
+                self.data["fen"].append(board.fen())
+            else:
+                self.data["outcome"] = move
+                break
 
     def fen(self, ply=-1):
         return self.data["fen"][ply]
@@ -58,20 +66,20 @@ class Chessboard:
         return action_target_chunk
 
 def targets(game):
-    moves = game.split()
+    tc = TargetCalculator(game)
+    moves = tc.moves
     N = len(game.strip()) + 2
     seq_input = bytes_to_tensor("\n" + game.strip() + " ")
     seq_target = bytes_to_tensor(game.strip() + " ")
     visual_target = torch.zeros([N,64], dtype=torch.long, device="cuda")
     action_target = torch.zeros([N,256], dtype=torch.long, device="cuda")
-    board = Chessboard(game.strip())
     idx = 0
     for ply, move in enumerate(moves):
         n = len(move) + 1
-        visual_target[idx:idx+n,:] = board.look(ply).reshape([1,-1])
-        action_target[idx:idx+n,:] = board.chunk(ply)
+        visual_target[idx:idx+n,:] = tc.look(ply).reshape([1,-1])
+        action_target[idx:idx+n,:] = tc.chunk(ply)
         idx += n
-    visual_target[idx] = board.look(-1)
-    for c in board.legal(-1):
+    visual_target[idx] = tc.look(-1)
+    for c in tc.legal(-1):
         action_target[idx,ord(c[0])] = 1
     return seq_input, seq_target, visual_target, action_target

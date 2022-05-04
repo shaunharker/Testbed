@@ -158,8 +158,9 @@ class ChessLanguageModel(Module):
     def numel(self):
         return sum(p.numel() for p in self.parameters())
 
-    def forward(self, game):
-        (seq_input, seq_target, visual_target, action_target) = targets(game)
+    def forward(self, game precomputed_targets=None):
+        precomputed_targets = precomputed_targets or targets(game)
+        (seq_input, seq_target, visual_target, action_target) = precomputed_targets
         model_output = self.model(seq_input)
         seq_output = self.seq_head(model_output)
         visual_output = self.visual_head(model_output)

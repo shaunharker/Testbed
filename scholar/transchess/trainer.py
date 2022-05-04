@@ -4,6 +4,8 @@ import torch
 import asyncio
 import time
 from IPython.display import HTML
+from queue import Queue
+from .targets import targets, targets_from_data, bytes_to_tensor
 
 class Trainer:
     def __init__(self, model, optimizer, dataset):
@@ -23,8 +25,17 @@ class Trainer:
         self.warm_up = 0
         self.update = (lambda n: (n < self.warm_up)
             or (n%self.batch_multiplier == 0))
+        self.update = (lambda n: (n < self.warm_up)
+            or (n%self.batch_multiplier == 0))
+        for (pn, p) in self.model.named_parameters():
+            state = self.optimizer.state[pn]
+            state["lr"] = self.lr
+            state["beta1"] = self.beta1
+            state["beta2"] = self.beta2
+            state["weight_decay"] = self.weight_decay
+            state["update"] = self.update
         self.games = []
-
+        self.queue = Queue(max_size=1024)
 
     def status(self, lag=2000):
         losses = self.losses
@@ -63,16 +74,9 @@ class Trainer:
         return message
 
     def closure(self):
-        while True:
-            try:
-                game = self.dataset.bookgame(
-                   max_plies=self.plies)
-                (game, seq_input, seq_target, visual_target,
+        (game, seq_input, seq_target, visual_target,
                  action_target, seq_loss, visual_loss,
-                 action_loss) = self.model(game)
-                break
-            except:
-                pass
+                 action_loss) = self.queue.get()
         seq_loss_mean = torch.mean(seq_loss)
         visual_loss_mean = torch.mean(visual_loss)
         action_loss_mean = torch.mean(action_loss)
@@ -91,25 +95,16 @@ class Trainer:
             visual_loss_mean.item(), action_loss_mean.item())
 
     def step(self):
-        self.update = (lambda n: (n < self.warm_up)
-            or (n%self.batch_multiplier == 0))
-        for (pn, p) in self.model.named_parameters():
-            state = self.optimizer.state[pn]
-            state["lr"] = self.lr
-            state["beta1"] = self.beta1
-            state["beta2"] = self.beta2
-            state["weight_decay"] = self.weight_decay
-            state["update"] = self.update
         return self.optimizer.step(self.closure)
 
-    async def train(self):
-        await asyncio.sleep(1)
+    async def prepare(self):
         while True:
-            try:
-                self.step()
-            except:
-                pass
-            await asyncio.sleep(.1)
+            game = ""
+            for _ in range(1024):
+                game += " " + self.dataset.bookgame(
+                    max_plies=self.plies).strip()
+            for record in analyze(game):
+                self.queue.put(targets_from_data(record))
 
     def reset(self):
         self.times = []
