@@ -1,5 +1,5 @@
-// engine.cpp
-// need a passable chess engine
+// chessboard.hpp
+// need a passable chess Chessboard
 // Shaun Harker 2022-05-01
 // MIT LICENSE
 
@@ -282,7 +282,7 @@ void bitapply(uint64_t x, F f) {
   }
 }
 
-class Engine {
+class Chessboard {
 public:
   uint64_t white;
   uint64_t black;
@@ -300,7 +300,7 @@ public:
   mutable bool cache_is_computed;
   mutable std::vector<Move> _moves;
   mutable std::vector<std::string> _sanmoves;
-  Engine(){
+  Chessboard(){
     white = rank_1 | rank_2;
     black = rank_7 | rank_8;
     king = e1 | e8;
@@ -339,12 +339,12 @@ public:
     // Remove the "cannot move into check" rule from the game,
     // and the resulting moves are called pseudolegal moves.
     //
-    // However we distinguish this from "cannot castle through check"
+    // However we distinguish this from "cannot castle through check or when in check"
     // which we regard as an independent rule, as it is based on the
     // enemy threat before the move rather than after the move.
     //
     // Therefore, it is pseudolegal to castle into check as long
-    // as it is not *through* check.
+    // as it is not *through* check or starting from check.
     //
     // I might change this, though. Ha!
     //
@@ -377,8 +377,8 @@ public:
       auto Y = hopper(x, kingmoves);
       add(x, Y & empty_or_them, standard);
       uint64_t castlerooks = us & rook & castling;
-      add(x, e(e(castlerooks)) & e(empty) & empty & w(safe_and_empty) & w(w(x)), castleQ);
-      add(x, e(e(x)) & e(safe_and_empty) & empty & w(castlerooks), castleK);
+      add(x, e(e(castlerooks)) & e(empty) & empty & w(safe_and_empty) & w(w(x & safe)), castleQ);
+      add(x, e(e(x & safe)) & e(safe_and_empty) & empty & w(castlerooks), castleK);
     });
 
     bitapply(us & (queen | rook), [&](uint64_t x){
@@ -577,7 +577,7 @@ public:
     for (auto [source, target, flag] : pl_moves) {
       // We filter out moves that leave us in check and also
       // add flags for whether a legal move is a check or a mate.
-      Engine after(*this); // fork a new position
+      Chessboard after(*this); // fork a new position
       after._move({source, target, flag});
       uint64_t us_after = white_to_move ? after.white : after.black;
       uint64_t them_after = white_to_move ? after.black : after.white;
@@ -771,138 +771,65 @@ public:
     // display board
     uint64_t s = 1;
     std::ostringstream ss;
+    // the board string,
+    // e.g. rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR
+    char b='0', c='1';
     for (int i=0; i<8; ++i) {
+      if (i > 0) ss << "/";
       for (int j=0; j<8; ++j) {
         if (s & white) {
           if (s & king) {
-            ss << "K";
+            c = 'K';
           } else if (s & queen) {
-            ss << "Q";
+            c = 'Q';
           } else if (s & bishop) {
-            ss << "B";
+            c = 'B';
           } else if (s & knight) {
-            ss << "N";
+            c = 'N';
           } else if (s & rook) {
-            ss << "R";
+            c = 'R';
           } else if (s & pawn) {
-            ss << "P";
-          } else {
-            ss << "?"; // debug
+            c = 'P';
           }
-        } else if (s & black) {
+        } else
+        if (s & black) {
           if (s & king) {
-            ss << "k";
+            c = 'k';
           } else if (s & queen) {
-            ss << "q";
+            c = 'q';
           } else if (s & bishop) {
-            ss << "b";
+            c = 'b';
           } else if (s & knight) {
-            ss << "n";
+            c = 'n';
           } else if (s & rook) {
-            ss << "r";
+            c = 'r';
           } else if (s & pawn) {
-            ss << "p";
+            c = 'p';
           }
+        }
+        if (c == '1') {
+          ++b;
         } else {
-          ss << ".";
+          (b > '0') ? (ss << b << c) : (ss << c);
+          b = '0';
+          c = '1';
         }
         s <<= 1;
       }
-      ss << "\n";
+      if (b > '0') {
+        ss << b;
+        b = '0';
+      }
     }
+    bool white_to_move = (ply % 2 == 0);
+    ss << " " << (white_to_move ? "w " : "b ");
+    if (castling & h1) ss << "K";
+    if (castling & a1) ss << "Q";
+    if (castling & h8) ss << "k";
+    if (castling & h1) ss << "q";
+    enpassant ? (ss << " " << square(ntz(enpassant)) << " ") : (ss << " - ");
+    ss << halfmove << " " << fullmove;
     return ss.str();
   }
 
 };
-
-int main(int argc, char * argv []) {
-  bool uci_mode = false;
-  std::deque<std::string> inputs;
-  std::vector<std::string> game;
-  Engine engine;
-  double geomsum = 0.0;
-  double plycnt = 0.0;
-  double arithsum = 0.0;
-  bool validgame = true;
-  while (true) {
-    // display board
-    std::cout << "Board:\n\n" << engine.board() << "\n";
-    // display game
-    std::cout << "Game: ";
-    for (auto move : game) {
-      std::cout << move << " ";
-    }
-    std::cout << "\b\n\n";
-
-    // display legal moves
-    std::cout << "Legal Moves: ";
-    std::vector<std::string> moves = engine.legal_moves();
-    for (auto move : moves) std::cout << move << " ";
-    std::cout << "\b\n\n";
-
-    if (moves.size() == 0) {
-      game.clear();
-      engine = Engine();
-    } else {
-      geomsum += std::log(moves.size());
-      arithsum += moves.size();
-      plycnt += 1.0;
-    }
-    // Read moves from stdin
-    bool first = true;
-    std::cout << "> ";
-    while (inputs.size() == 0) {
-      //std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      if (first) {
-        first = false;
-      } else {
-        //std::cerr << "Total number of moves considered: " << arithsum << "\n";
-        //std::cerr << "Arithmetic average number of moves = " << arithsum/plycnt << "\n";
-        //std::cerr << "Geometric average number of moves (branching factor) = " << std::exp(geomsum/plycnt) << "\n";
-        return 0;
-      }
-      std::string user;
-      std::cin >> user;
-      std::istringstream ss(user);
-      std::string item;
-      while(std::getline(ss, item, ' ')){
-        if (item == "new" || item == "0-1" || item == "1-0" || item == "1/2-1/2" || item == "...") {
-          game.clear();
-          engine = Engine();
-          first = true;
-          if (!validgame) {
-            std::cerr << item << "\n";
-          }
-          validgame = true;
-        } else {
-          inputs.push_back(item);
-        }
-      }
-    }
-
-    //if (inputs.size() > 0) {
-    std::string move = inputs.front();
-    inputs.pop_front();
-
-    if (validgame && engine.move(move)) {
-      //std::cerr << ".[" << move << "]";
-      game.push_back(move);
-    } else {
-      if (!game.empty()) {
-        for (auto m : game) std::cerr << m << " ";
-        game.clear();
-        validgame = false;
-      }
-      std::cerr << move << " ";
-    }
-  }
-  return 0;
-}
-
-/*
-
-Test game:
-
-d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Be2 O-O Bg5 c5 d5 a6 a4 e6 Qd2 exd5 exd5 Re8 h3 Qa5 Nf3 b5 Bxf6 Bxf6 Ne4 Qxd2+ Nfxd2 Bxb2 Ra2 Be5 f4 Bg7 Nxd6 Rd8 Nxc8 Rxc8 axb5 a5 Ne4 Nd7 Kd2 Re8 Bd3 Bd4 Rf1 Ra7 Rf3 Kf8 Nd6 Rd8 b6 Ra6 Nb5 Bg7 b7 Rb8 Nc7 Ra7 Nb5 Ra6 Be2 Bf6 Nc7 Ra7 Nb5 Ra6 Rfa3 Bd8 d6 Rxb7 Bf3 Rb8 Kd3 Nf6 Rd2 Ne8 Kc2 Rbb6 Rad3 h6 Rd5 a4 Kb1 a3 Ka2 Ra4 Rxc5 Rb8 d7 Ke7 Re5+ Kf6 dxe8=N#
-
-*/
