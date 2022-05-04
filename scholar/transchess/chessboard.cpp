@@ -21,22 +21,20 @@ int main(int argc, char * argv []) {
   Chessboard board;
   bool valid = true;
   while (true) {
-
     // Read moves from stdin
-    bool fresh = true;
     while (inputs.size() == 0) {
-      if (fresh) {
-        fresh = false;
-      } else {
-        return 1;
-      }
       std::string user;
-      std::cin >> user;
+      while (!(std::cin >> user)) {
+        return 0;
+        // std::cin.clear();
+        // std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      };
       std::istringstream ss(user);
       std::string item;
       while(std::getline(ss, item, ' ')){
-        if (item == "0-1" || item == "1-0" || item == "1/2-1/2" || item == "...") {
-          if (valid && game.size() > 8) {
+        if (item == "0-1" || item == "1-0" || item == "1/2-1/2" || item == "..." || item == "new") {
+          if (valid && game.size() > 0) {
             std::string output_style = "echo";
             if (argc > 1) {
               output_style = std::string(argv[1]);
@@ -48,11 +46,17 @@ int main(int argc, char * argv []) {
               std::cout << item << "\n";
             } else
             if (output_style == "full") {
-              std::cout << "{\"game\": \"";
+              std::cout << "{\"game\": [";
+              bool firstmove = true;
               for (auto move : game) {
-                std::cout << move << " ";
+                if (firstmove) {
+                  firstmove = false;
+                } else {
+                  std::cout << ", ";
+                }
+                std::cout << "\"" << move << "\"";
               }
-              std::cout << "\", \"outcome\": \"" << item << "\", \"legal\": [";
+              std::cout << "], \"outcome\": \"" << item << "\", \"legal\": [";
               auto legaljson = [&](){
                 std::stringstream ss;
                 ss << "[";
@@ -83,7 +87,6 @@ int main(int argc, char * argv []) {
 
           game.clear();
           board = Chessboard();
-          fresh = true;
           valid = true;
         } else {
           inputs.push_back(item);
