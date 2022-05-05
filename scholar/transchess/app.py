@@ -69,7 +69,11 @@ class TransChess:
         If no model is provides, just pick a random legal move
         """
         if model is None:
-            return random.choice(self.legal())
+            legal = self.legal()
+            if len(legal) == 0:
+                return None
+            else:
+                return random.choice(self.legal())
         if model == "stockfish":
             time = time or 1.0
             return self.stockfish(playmove=False, time=time)

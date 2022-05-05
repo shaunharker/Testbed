@@ -57,9 +57,12 @@ class AdamW:
                 pass
 
     @torch.no_grad()
-    def step(self, closure):
+    def step(self, closure=None):
         with torch.enable_grad():
-            result = closure()
+            if closure is not None:
+                result = closure()
+            else:
+                result = None
         for (name, p) in self.parameters.items():
             n = self.n
             state = self.state[name]

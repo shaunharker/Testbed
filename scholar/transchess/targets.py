@@ -15,12 +15,12 @@ bytes_to_tensor = lambda x: torch.tensor(np.frombuffer(
 
 class TargetCalculator:
     def __init__(self, game=""):
-        self.moves = game.split()
-        self.data = {"game": "", "legal": [], "fen" : []}
+        self.data = {"game": [], "legal": [], "fen" : []}
         board = Chessboard()
         self.data["legal"].append(board.legal())
         self.data["fen"].append(board.fen())
-        for move in self.moves:
+        moves = game.split()
+        for move in moves:
             if board.move(move):
                 self.data["game"].append(move)
                 self.data["legal"].append(board.legal())
@@ -65,14 +65,25 @@ class TargetCalculator:
                 and m[d] == c]
         return action_target_chunk
 
-def targets(game):
+def maketargets(game, seq_length):
     tc = TargetCalculator(game)
-    moves = tc.moves
-    N = len(game.strip()) + 2
-    seq_input = bytes_to_tensor("\n" + game.strip() + " ")
-    seq_target = bytes_to_tensor(game.strip() + " ")
-    visual_target = torch.zeros([N,64], dtype=torch.long, device="cuda")
-    action_target = torch.zeros([N,256], dtype=torch.long, device="cuda")
+    moves = tc.data["game"]
+    ply = 0
+    sz = 1
+    for move in moves:
+        ply += 1
+        sz += len(move) + 1
+        if sz >= seq_length:
+            break
+    moves = moves[:ply]
+    game = ' '.join(moves)
+    N = len(game) + 2
+    seq_input = bytes_to_tensor("\n" + game + " ")
+    seq_target = bytes_to_tensor(game + " ")
+    visual_target = torch.zeros([N,64],
+        dtype=torch.long, device="cuda")
+    action_target = torch.zeros([N,256],
+        dtype=torch.long, device="cuda")
     idx = 0
     for ply, move in enumerate(moves):
         n = len(move) + 1
@@ -82,4 +93,10 @@ def targets(game):
     visual_target[idx] = tc.look(-1)
     for c in tc.legal(-1):
         action_target[idx,ord(c[0])] = 1
-    return seq_input, seq_target, visual_target, action_target
+    seq_length = min(seq_length, len(seq_input))
+    seq_input = seq_input[:seq_length]
+    seq_target = seq_target[:seq_length]
+    visual_target = visual_target[:seq_length]
+    action_target = action_target[:seq_length]
+    return (seq_input, seq_target,
+        visual_target, action_target)

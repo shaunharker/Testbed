@@ -4,8 +4,8 @@ import torch
 import asyncio
 import time
 from IPython.display import HTML
-from queue import Queue
-from .targets import targets, targets_from_data, bytes_to_tensor
+from asyncio import LifoQueue as Queue
+from .targets import maketargets, bytes_to_tensor
 
 class Trainer:
     def __init__(self, model, optimizer, dataset):
@@ -13,7 +13,9 @@ class Trainer:
         self.optimizer = optimizer
         self.dataset = dataset
         self.reset()
-        self.plies = 100
+        self.seq_length = 16
+        self.batch_size = 1
+        self.batch_multiplier = 1
         self.seq_coef = 0.0
         self.visual_coef = 0.0
         self.action_coef = 0.0
@@ -21,10 +23,7 @@ class Trainer:
         self.beta1 = lambda n: 0.9
         self.beta2 = lambda n: 0.999
         self.weight_decay = lambda n: 0.001
-        self.batch_multiplier = 1
         self.warm_up = 0
-        self.update = (lambda n: (n < self.warm_up)
-            or (n%self.batch_multiplier == 0))
         self.update = (lambda n: (n < self.warm_up)
             or (n%self.batch_multiplier == 0))
         for (pn, p) in self.model.named_parameters():
@@ -34,8 +33,51 @@ class Trainer:
             state["beta2"] = self.beta2
             state["weight_decay"] = self.weight_decay
             state["update"] = self.update
-        self.games = []
-        self.queue = Queue(max_size=1024)
+        self.queue = Queue(maxsize=16)
+
+    async def prepare(self):
+        while True:
+            targets = [maketargets(game=self.dataset.bookgame(),
+                seq_length=self.seq_length)
+                for _ in range(self.batch_size)]
+            # collate
+            seq_len = min(t[1].shape[0] for t in targets)
+            seq_len = min(seq_len, self.seq_length)
+            # enqueue
+            job = tuple(torch.stack([t[k][:seq_len] for t in targets], dim=0) for k in range(4))
+            await self.queue.put(job)
+
+    async def step(self):
+        tgt = await self.queue.get()
+        (seq_loss, visual_loss,
+          action_loss) = self.model(targets=tgt)
+        seq_loss_mean = torch.mean(seq_loss)
+        visual_loss_mean = torch.mean(visual_loss)
+        action_loss_mean = torch.mean(action_loss)
+        loss = (self.seq_coef * seq_loss_mean +
+            self.visual_coef * visual_loss_mean +
+            self.action_coef * action_loss_mean)
+        loss.backward()
+        self.losses.append(loss.item())
+        self.seq_losses.append(seq_loss_mean.item())
+        self.visual_losses.append(visual_loss_mean.item())
+        self.action_losses.append(action_loss_mean.item())
+        self.times.append(time.time() - self.t0)
+        self.n += 1
+        self.optimizer.step()
+        return (seq_loss_mean.item(),
+            visual_loss_mean.item(),
+            action_loss_mean.item())
+
+    def reset(self):
+        self.times = []
+        self.losses = []
+        self.seq_losses = []
+        self.visual_losses = []
+        self.action_losses = []
+        self.monitor = []
+        self.n = 0
+        self.t0 = time.time()
 
     def status(self, lag=2000):
         losses = self.losses
@@ -52,8 +94,10 @@ class Trainer:
         message = HTML(f"""<pre>self.monitor[{len(self.monitor)}] = {{
     "current_time" : "{now[:-2]}",
     "step"         : {n},
-    "plies"        : {self.plies},
+    "seq_length"   : {self.seq_length},
+    "batch_size"   : {self.batch_size},
     "training_time": {int(t)},
+    "learning rate": {self.lr(self.n)},
     "seq_loss"     : {S:.6},
     "visual_loss"  : {V:.6},
     "action_loss"  : {A:.6},
@@ -64,54 +108,13 @@ class Trainer:
         self.monitor.append({
             "current_time" : now[:-2],
             "step"         : n,
-            "plies"        : self.plies,
+            "seq_length"   : self.seq_length,
+            "batch_size"   : self.batch_size,
             "training_time": int(t),
+            "learning rate": self.lr(self.n),
             "seq_loss"     : S,
             "visual_loss"  : V,
             "action_loss"  : A,
             "total_loss"   : L,
             "games per sec": int(n/t*10)/10})
         return message
-
-    def closure(self):
-        (game, seq_input, seq_target, visual_target,
-                 action_target, seq_loss, visual_loss,
-                 action_loss) = self.queue.get()
-        seq_loss_mean = torch.mean(seq_loss)
-        visual_loss_mean = torch.mean(visual_loss)
-        action_loss_mean = torch.mean(action_loss)
-        loss = (self.seq_coef * seq_loss_mean +
-            self.visual_coef * visual_loss_mean +
-            self.action_coef * action_loss_mean)
-        loss.backward()
-        self.games.append(game)
-        self.losses.append(loss.item())
-        self.seq_losses.append(seq_loss_mean.item())
-        self.visual_losses.append(visual_loss_mean.item())
-        self.action_losses.append(action_loss_mean.item())
-        self.times.append(time.time() - self.t0)
-        self.n += 1
-        return (game, seq_loss_mean.item(),
-            visual_loss_mean.item(), action_loss_mean.item())
-
-    def step(self):
-        return self.optimizer.step(self.closure)
-
-    async def prepare(self):
-        while True:
-            game = ""
-            for _ in range(1024):
-                game += " " + self.dataset.bookgame(
-                    max_plies=self.plies).strip()
-            for record in analyze(game):
-                self.queue.put(targets_from_data(record))
-
-    def reset(self):
-        self.times = []
-        self.losses = []
-        self.seq_losses = []
-        self.visual_losses = []
-        self.action_losses = []
-        self.monitor = []
-        self.n = 0
-        self.t0 = time.time()

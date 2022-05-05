@@ -7,7 +7,6 @@ import torch
 from stockfish import Stockfish
 import chess
 import types
-from .targets import targets
 
 def utf8encode(char_sequence):
     if type(char_sequence) == types.GeneratorType:
@@ -102,9 +101,9 @@ class ChessDataset:
         self.n_bytes = Path(self.path).stat().st_size
         self.data = np.memmap(self.path, dtype=np.uint8, mode='r', offset=0)
 
-    def bookgame(self, max_plies=800):
+    def bookgame(self):
         game = self.book[randrange(len(self.book))]
-        return ' '.join(game.split()[:max_plies])
+        return ' '.join(game.split())
 
     def stockfishgame(self, max_plies=800):
         engine = Stockfish()
