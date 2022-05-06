@@ -19,7 +19,7 @@ class Trainer:
         self.seq_coef = 0.0
         self.visual_coef = 0.0
         self.action_coef = 0.0
-        self.lr = lambda n: 1e-5*(n/100) if n < 100 else 1e-5
+        self.lr = lambda n: 0.0
         self.beta1 = lambda n: 0.9
         self.beta2 = lambda n: 0.999
         self.weight_decay = lambda n: 0.001
@@ -37,11 +37,11 @@ class Trainer:
 
     async def prepare(self):
         while True:
-            targets = [maketargets(game=self.dataset.bookgame(),
+            targets = [maketargets(game=self.dataset.bookgame(seq_length=self.seq_length)[0],
                 seq_length=self.seq_length)
                 for _ in range(self.batch_size)]
             # collate
-            seq_len = min(t[1].shape[0] for t in targets)
+            seq_len = min(t[0].shape[0] for t in targets)
             seq_len = min(seq_len, self.seq_length)
             # enqueue
             job = tuple(torch.stack([t[k][:seq_len] for t in targets], dim=0) for k in range(4))
@@ -52,8 +52,9 @@ class Trainer:
         (seq_loss, visual_loss,
           action_loss) = self.model(targets=tgt)
         seq_loss_mean = torch.mean(seq_loss)
-        visual_loss_mean = torch.mean(visual_loss)
-        action_loss_mean = torch.mean(action_loss)
+        seq_loss_mean = torch.nan_to_num(seq_loss_mean)
+        visual_loss_mean = torch.mean(visual_loss)*64
+        action_loss_mean = torch.mean(action_loss)*256
         loss = (self.seq_coef * seq_loss_mean +
             self.visual_coef * visual_loss_mean +
             self.action_coef * action_loss_mean)

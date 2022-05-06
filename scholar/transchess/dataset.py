@@ -101,9 +101,14 @@ class ChessDataset:
         self.n_bytes = Path(self.path).stat().st_size
         self.data = np.memmap(self.path, dtype=np.uint8, mode='r', offset=0)
 
-    def bookgame(self):
-        game = self.book[randrange(len(self.book))]
-        return ' '.join(game.split())
+    def bookgame(self, seq_length = 0):
+        for _ in range(1000):
+            game = self.book[randrange(len(self.book))]
+            moves = game.split()
+            game, outcome = ' '.join(moves[:-1]), moves[-1]
+            if len(game) > seq_length:
+                return game, outcome
+        raise ValueError(f"dataset.bookgame: Could not quickly find a game of seq_length {seq_length}")
 
     def stockfishgame(self, max_plies=800):
         engine = Stockfish()

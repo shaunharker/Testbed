@@ -183,15 +183,19 @@ class ChessLanguageModel(Module):
     def numel(self):
         return sum(p.numel() for p in self.parameters())
 
-    def forward(self, game=None, targets=None):
-        # note: seq_target is allowed to be shorter
+    def forward(self, game=None, seq_length=None, targets=None):
         (seq_input, seq_target, visual_target,
-            action_target) = targets or maketargets(game)
+            action_target) = targets or maketargets(
+                game, seq_length)
+        # print('model forward shapes', seq_input.shape,
+        #     seq_target.shape,
+        #     visual_target.shape,
+        #     action_target.shape)
         model_output = self.model(seq_input)
         seq_output = self.seq_head(model_output)
-        seq_output = seq_output[...,:seq_target.shape[-1],:]
         visual_output = self.visual_head(model_output)
         action_output = self.action_head(model_output)
+        seq_output += 1 - 1/action_target
         seq_loss = self.seq_crit(seq_output, seq_target)
         visual_loss = self.visual_crit(visual_output, visual_target)
         action_loss = self.action_crit(action_output, action_target)
