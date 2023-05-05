@@ -62,11 +62,12 @@ class TransChess:
     def legal(self):
         return [self.board.san(move) for move in self.board.legal_moves]
 
-    def generate(self, model=None, time=None):
+    def generate(self, model=None, temp=1.0, time=None):
         """
         Use the provided neural net to come up with next move
         equivalent to `model.move(game)`
-        If no model is provides, just pick a random legal move
+        Can also set model == 'stockfish' to use stockfish engine
+        If no model is provided, just pick a random legal move
         """
         if model is None:
             legal = self.legal()
@@ -77,7 +78,7 @@ class TransChess:
         if model == "stockfish":
             time = time or 1.0
             return self.stockfish(playmove=False, time=time)
-        return model.move(self.game)
+        return model.move(self.game, temp=temp)
 
     # private
 

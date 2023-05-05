@@ -20,24 +20,24 @@ class Trainer:
         self.losses = []
         self.t0 = None
 
-    def status(self, N=None):
+    def status(self, N=None, lossscale=1.0):
         n = self.n
         if self.t0 is None:
             t = 1
         else:
             t = time.time() - self.t0
         N = N or n//2
-        L = 8*np.mean(np.array(self.losses[n-N:n]))
+        L = lossscale*np.mean(np.array(self.losses[n-N:n]))
         now = datetime.now().strftime("%Y-%m-%d-%H%M%S")
         message = '\n'.join([
             f"time            = {now[:-2]}",
-            f"L               ~ {int(L*1e6)/1e6} bpc",
+            f"L               ~ {int(L*1e6)/1e6}",
             f"batch_size      = {self.batch_size(n)}",
             f"example_length  = {self.example_length(n)}",
             f"n               = {n} steps",
             f"t               = {int(t)} seconds",
             f"n/t             = {int(n/t*10)/10} steps per second",
-            f"feeding rate    = {int(self.batch_size(n)*self.example_length(n)*n/t/1024)} KiBps",
+            f"feeding rate    = {int(self.batch_size(n)*self.example_length(n)*n/t/1024)} KiTps",
         ])
         return message
 

@@ -66,7 +66,7 @@ class ChessDataset:
         self.decode = utf8decode
         self.encode = utf8encode
         self._load()
-        with open("/home/sharker/data/standard-chess.utf8") as infile:
+        with open(path) as infile:
             book = list(infile.readlines())
         self.book = sorted(book)
         self.in_book = lambda s: book[bisect.bisect_left(book, s)].startswith(s)
