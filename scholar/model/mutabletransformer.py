@@ -44,7 +44,7 @@ class Attn(Module):
         return self.linear(merge_heads(self.softmax(self.mask(QKT))@V))
 
 
-class TransformerLayer(Module):
+class MutableTransformerLayer(Module):
     def __init__(self, d_model, d_k, d_v, n_heads, d_hidden, mask="none"):
         super().__init__()
         self.d_model = d_model
@@ -74,7 +74,7 @@ class PositionalEncoding(Module):
         return x + self.weight[:n_ctx]
 
 
-class TransformerLM(Module):
+class MutableTransformerLM(Module):
     def __init__(self,
                  n_vocab_in,
                  n_vocab_out,
@@ -107,7 +107,7 @@ class TransformerLM(Module):
         self.autocast_enabled = autocast_enabled or False
         self.mode = mode
         self.mask = mask
-        self.transformerlayers = [TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, mask) for _ in range(n_layers)]
+        self.transformerlayers = [MutableTransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, mask) for _ in range(n_layers)]
         assert n_layers >= n_layers_init + n_layers_final
         # print('A', self.transformerlayers)
         self.transformerlayers = self.transformerlayers[:n_layers_init] + (self.transformerlayers[n_layers_init:-n_layers_final])*n_iter_core + self.transformerlayers[-n_layers_final:]

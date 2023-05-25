@@ -5,8 +5,7 @@ import copy
 import torch
 from torch.cuda.amp import autocast
 from torch.nn import Module, ModuleList, Sigmoid, ReLU, GELU, LayerNorm
-from torch.nn import Embedding as TorchEmbedding
-from torch.nn import Linear as TorchAffine
+from torch.nn import Linear
 
 
 class SplitExample(Module):
@@ -19,13 +18,6 @@ class SplitExample(Module):
             return (xy[...,:-1].contiguous(), xy[...,-1].contiguous())
         elif self.mode == "shift":
             return (xy[...,:-1].contiguous(), xy[...,1:].contiguous())
-
-
-class Embedding(TorchEmbedding):
-    def __init__(self, n_classes, d_model):
-        super().__init__(n_classes, d_model)
-        self.n_classes = n_classes
-        self.d_model = d_model
 
 
 class Sequential(Module):
@@ -56,13 +48,6 @@ class Lambda(Module):
     def __setstate__(self, state):
         self.__dict__.update(state)
         self.F = dill.loads(self.F)
-
-
-class Affine(TorchAffine):
-    def __init__(self, d_in, d_out, bias=True):
-        super().__init__(d_in, d_out, bias)
-        self.d_in = d_in
-        self.d_out = d_out
 
 
 class Nonlinearity(Module):
@@ -114,14 +99,14 @@ class MLP(Module):
         self.d_out = d_out
         self.nonlinearity = nonlinearity
         self.module = Sequential(
-            Affine(d_in=d_in, d_out=self.d_hidden[0]),
+            Linear(d_in, self.d_hidden[0]),
             Sequential(
                 Sequential(
                     Nonlinearity(nonlinearity),
-                    Affine(d_in=a, d_out=b))
+                    Linear(a, b))
                 for (a,b) in zip(self.d_hidden[:-1], self.d_hidden[1:])),
             Nonlinearity(nonlinearity),
-            Affine(d_in=self.d_hidden[-1], d_out=d_out))
+            Linear(self.d_hidden[-1], d_out))
 
     def forward(self, x):
         return self.module(x)
