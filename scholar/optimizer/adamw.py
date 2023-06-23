@@ -8,6 +8,7 @@ class EMAFilter:
         self.n = 0
         self.x = None
         self.init = init
+
     def __call__(self, x):
         if self.x is None:
             if self.init == "zeros":
@@ -17,6 +18,11 @@ class EMAFilter:
             else:
                 raise ValueError(f"EMAFilter: unrecognized choice init = {self.init}")
         else:
+            if self.x.shape != x.shape:
+                new_x = torch.zeros_like(x, memory_format=torch.preserve_format)
+                slices = [slice(0, dim) for dim in self.x.shape]
+                new_x[slices] = self.x
+                self.x = new_x
             beta = self.param(self.n)
             self.x.mul_(beta).add_(x, alpha=1-beta)
         self.n += 1
@@ -35,11 +41,17 @@ class AdamW:
                  weight_decay=lambda n: 0.01,
                  update=lambda n: True,
                  n=0):
+        self.lr = lr
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.weight_decay = weight_decay
+        self.update = update
+        self.n = n
+
         try:
             self.parameters = dict(parameters)
         except:
             self.parameters = dict(enumerate(parameters))
-        self.n = 0
         self.state = {
             name: {
                 'lr': lr,
@@ -55,6 +67,21 @@ class AdamW:
                     p.grad.data *= 0.0
             except:
                 pass
+
+    def update(self, parameters):
+        try:
+            self.parameters = dict(parameters)
+        except:
+            self.parameters = dict(enumerate(parameters))
+        for (name, p) in self.parameters.items():
+            if name not in self.state:
+                self.state[name] = {
+                    'lr': lr,
+                    'G': EMAFilter(self.beta1, init="zeros"),
+                    'G2': EMAFilter(self.beta2, init="zeros"),
+                    'weight_decay': self.weight_decay,
+                    'update': self.update}
+                p.grad.data *= 0.0
 
     @torch.no_grad()
     def step(self, closure=None):

@@ -1,3 +1,6 @@
+import random, string
+
+
 def stepwise_addition(n, m):
     # Ensure n and m are positive integers with less than 8 digits
     assert 0 <= n < 10**8 and 0 <= m < 10**8, "Inputs must be positive integers less than 100,000,000"
@@ -84,3 +87,58 @@ def get_sort_example(k):
 
 def get_sort_batch(k):
     return torch.stack([get_sort_example(k) for _ in range(4)])
+
+
+from transformers import GPT2LMHeadModel, GPT2Config
+import torch
+
+def migrate_model(old_model, new_config):
+    # Initialize a new model with the new config
+    new_model = GPT2LMHeadModel(new_config)
+    
+    # Migrate parameters from old model to new model
+    for old_param_key, new_param_key in zip(old_model.state_dict(), new_model.state_dict()):
+        old_param = old_model.state_dict()[old_param_key]
+        new_param = new_model.state_dict()[new_param_key]
+
+        if old_param.size() == new_param.size():
+            # If the old parameter has the same size as the new one, 
+            # just copy the parameter values
+            new_model.state_dict()[new_param_key].data.copy_(old_param.data)
+        elif len(old_param.size()) == len(new_param.size()):
+            # If the old parameter and the new parameter have the same number of dimensions, 
+            # but different sizes, we can copy the original values and 
+            # initialize the rest randomly
+            slice_obj = [slice(0, min(dim_old, dim_new)) for dim_old, dim_new in zip(old_param.size(), new_param.size())]
+            new_model.state_dict()[new_param_key].data[slice_obj].copy_(old_param.data[slice_obj])
+            remaining_dims = [slice(dim_old, dim_new) for dim_old, dim_new in zip(old_param.size(), new_param.size())]
+            new_model.state_dict()[new_param_key].data[remaining_dims].normal_(0, 0.02)
+        else:
+            # In this case, the parameters are not compatible and need to be initialized from scratch
+            # An example could be the parameters of the extra layers when n_layers is increased
+            new_model.state_dict()[new_param_key].data.normal_(0, 0.02)
+    
+    return new_model
+
+def transfer_weights_larger(new_model, old_model):
+    # get named parameters (which includes both weights and biases)
+    old_params = dict(old_model.named_parameters())
+    new_params = dict(new_model.named_parameters())
+
+    for name in new_params.keys():
+        # if old model has the same layer, copy weights
+        if name in old_params:
+            old_shape = old_params[name].shape
+            new_shape = new_params[name].shape
+            with torch.no_grad():
+                # Check if old param can fit into new param shape
+                if all(i <= j for i, j in zip(old_shape, new_shape)):
+                    # Create a new tensor with the same shape as the new parameters, fill it with zeros (or another value / random values)
+                    tmp = torch.zeros_like(new_params[name])
+                    # Set the subset corresponding to the old parameter shape to the old parameter values
+                    tmp[tuple(slice(i) for i in old_shape)] = old_params[name]
+                    # Copy the temporary tensor to the new parameters
+                    new_params[name].copy_(tmp)
+                    print(f"Copied weights for layer {name}")
+                else:
+                    print(f"Unable to copy weights for layer {name}, old parameters too large.")

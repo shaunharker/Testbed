@@ -29,7 +29,8 @@ class ShuffledDataStreamer:
         with open(self.filepath, 'r') as f:
             for line_number in range(start_line, len(self.index)):
                 f.seek(self.index[line_number])
-                yield json.loads(f.readline())['text']
+                text = json.loads(f.readline())['text']
+                yield text
 
             for line_number in range(0, start_line):
                 f.seek(self.index[line_number])
@@ -41,7 +42,6 @@ class ShuffledDataStreamer:
     def line_count(self):
         return len(self.index)
     
-pilestreamer = ShuffledDataStreamer("/data/thepile/00.jsonl")
 
 def accumulate_bytes_until(gen, byte_size):
     accumulated = bytes()
@@ -53,7 +53,7 @@ def accumulate_bytes_until(gen, byte_size):
             accumulated = accumulated[byte_size:]
 
 
-class PileBytesDataset:
+class OldPileBytesDataset:
     def __init__(self, path=None, device='cuda'):
         if path is None:
             user = os.environ["USER"]
@@ -62,9 +62,39 @@ class PileBytesDataset:
         self.device = device
         self.decode = utf8decode
         self.encode = utf8encode
-        self.reader = pilestreamer.stream()
+        self.streamer = ShuffledDataStreamer("/data/thepile/00.jsonl")
+        self.reader = self.streamer.stream()
 
     def batch(self, batch_size, example_length):
         return torch.stack([torch.tensor([b for b in snippet], dtype=torch.long, device=self.device)
             for snippet, _ in zip(accumulate_bytes_until(self.reader, example_length), range(batch_size))])
-    
+
+def accumulator(gen, byte_size):
+    accumulated = bytes()
+    for item in gen:
+        item_bytes = item.encode('utf-8')
+        accumulated += item_bytes
+        if len(accumulated) >= byte_size:
+            offset = random.randint(0, len(accumulated) - byte_size)
+            yield accumulated[offset:offset+byte_size]
+
+class PileBytesDataset:
+    def __init__(self, path=None, device='cuda'):
+        if path is None:
+            user = os.environ["USER"]
+            path = f"/data/thepile/01.jsonl"
+        self.path = path
+        self.device = device
+        self.decode = utf8decode
+        self.encode = utf8encode
+        self.streamer = ShuffledDataStreamer("/data/thepile/01.jsonl")
+        self.reader = self.streamer.stream()
+
+    def batch(self, batch_size, example_length):
+        while True:
+            try:
+                result = torch.stack([torch.tensor([b for b in snippet], dtype=torch.long, device=self.device)
+                    for snippet, _ in zip(accumulator(self.reader, example_length), range(batch_size))])
+                return result
+            except:
+                self.reader = self.streamer.stream()
