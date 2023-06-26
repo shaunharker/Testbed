@@ -155,8 +155,11 @@ class LanguageModel(Module):
 
     def forward(self, xy):
         (x, y) = self.split_example(xy)
-        x = self.module(x)
-        return self.crossentropyloss(x, y)
+        logits = self.module(x)
+        if len(logits.shape) > len(y.shape):
+            #y = torch.stack([y]*logits.shape[0], dim=0)
+            y = y.repeat(logits.shape[0], 1)
+        return self.crossentropyloss(logits, y)
 
     @torch.no_grad()
     def inference(self, x):

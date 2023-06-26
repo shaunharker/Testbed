@@ -68,7 +68,7 @@ class AdamW:
             except:
                 pass
 
-    def update(self, parameters):
+    def update_parameters(self, parameters):
         try:
             self.parameters = dict(parameters)
         except:
@@ -76,12 +76,15 @@ class AdamW:
         for (name, p) in self.parameters.items():
             if name not in self.state:
                 self.state[name] = {
-                    'lr': lr,
+                    'lr': self.lr,
                     'G': EMAFilter(self.beta1, init="zeros"),
                     'G2': EMAFilter(self.beta2, init="zeros"),
                     'weight_decay': self.weight_decay,
                     'update': self.update}
-                p.grad.data *= 0.0
+                try:
+                    p.grad.data *= 0.0
+                except:
+                    pass
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -94,7 +97,7 @@ class AdamW:
             n = self.n
             state = self.state[name]
             if state["update"](n):
-                g = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)  # scaling?
+                g = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
                 G = state['G'](g)
                 G2 = state['G2'](torch.square(g))
                 dp = G/torch.sqrt(G2)
