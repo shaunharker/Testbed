@@ -225,7 +225,7 @@ class TransformerLMHead(Module):
         self.d_model *= 2 # assume d_k = d_v; we maintain d_model = n_heads * d_k
         self.d_hidden *= 2
 
-        def source_to_target(source, target):
+        def source_to_target(source, target, halfweight=False):
             weight_exists = False
             bias_exists = False
             
@@ -247,8 +247,8 @@ class TransformerLMHead(Module):
                 print(source.weight.shape, target.weight.shape)
                 source.weight.repeat(multiple1,multiple2)
                 target.weight.data.copy_(source.weight.data.repeat(multiple1,multiple2))
-                if multiple1 == 2:
-                    target.weight.data *= .5 # keep it equivalent with two copies of the inputs coming in 
+                if halfweight:
+                    target.weight.data *= 0.5
 
             if bias_exists:
                 print(source.bias.shape, target.bias.shape)
@@ -278,7 +278,7 @@ class TransformerLMHead(Module):
         # read head
         print("Read Head.")
         new_read_head = Linear(self.d_model, self.n_vocab_out, bias=True).to(device)
-        source_to_target(self.read_head, new_read_head)
+        source_to_target(self.read_head, new_read_head, halfweight=True)
         self.read_head = new_read_head
 
         # transformer layers
@@ -296,20 +296,20 @@ class TransformerLMHead(Module):
             target = new_transformer_layer.attn
             source = layer.attn
             print("query")
-            source_to_target(source.query_proj, target.query_proj)
+            source_to_target(source.query_proj, target.query_proj, halfweight=True)
             print("key")
-            source_to_target(source.key_proj, target.key_proj)
+            source_to_target(source.key_proj, target.key_proj, halfweight=True)
             print("value")
-            source_to_target(source.value_proj, target.value_proj)
+            source_to_target(source.value_proj, target.value_proj, halfweight=True)
             print("linear")
-            source_to_target(source.linear, target.linear)
+            source_to_target(source.linear, target.linear, halfweight=True)
 
             target = new_transformer_layer.mlp
             source = layer.mlp
             print("ff1")
-            source_to_target(source.module.layers[0], target.module.layers[0])
+            source_to_target(source.module.layers[0], target.module.layers[0], halfweight=True)
             print("ff2")
-            source_to_target(source.module.layers[3], target.module.layers[3])
+            source_to_target(source.module.layers[3], target.module.layers[3], halfweight=True)
             
             self.transformerlayers[idx] = new_transformer_layer
 
