@@ -3,14 +3,15 @@ import torch
 import copy
 from torch.nn import Module, Linear, LayerNorm, Embedding, ModuleList
 from torch.cuda.amp import autocast
-from .nn import Sequential, MLP
+from .nn import Sequential, MLP, LanguageModel, ResidualLayerNorm
 
 
 
 class Mask(Module):
-    def __init__(self, mask="none"):
+    def __init__(self, mask="none", use_bitsandbytes=False):
         super().__init__()
         self.mask = mask
+        self.use_bitsandbytes = use_bitsandbytes
 
     def forward(self, x):
         n, device = x.shape[-1], x.device
@@ -18,21 +19,26 @@ class Mask(Module):
             return x
         elif self.mask == "causal":
             weight = (1-1/torch.tril(torch.ones((n,n),device=device)))
+            if self.use_bitsandbytes:   
+                weight = Int8Params(weight, requires_grad=False, has_fp16_weights=False)
             return x + weight
 
 
 class Attn(Module):
-    def __init__(self, d_model, d_k, d_v, n_heads, mask="none"):
+    def __init__(self, d_model, d_k, d_v, n_heads, mask="none", use_bitsandbytes=False):
         super().__init__()
         self.d_model = d_model
         self.d_k = d_k
         self.d_v = d_v
         self.n_heads = n_heads
         
-        self.mask = Mask(mask=mask)
+        self.mask = Mask(mask=mask, use_bitsandbytes=use_bitsandbytes)
         self.softmax = torch.nn.Softmax(dim=-1)
 
-        make = lambda m, n, bias: Linear(m, n, bias=bias)
+        if use_bitsandbytes:
+            make = lambda m, n, bias: bnb.nn.Linear8bitLt(m, n, bias=bias, has_fp16_weights=False, threshold=6.0)
+        else:
+            make = lambda m, n, bias: Linear(m, n, bias=bias)
 
         self.query_proj = make(d_model, d_k*n_heads, True)
         self.key_proj = make(d_model, d_k*n_heads, True)
@@ -51,7 +57,7 @@ class Attn(Module):
 
 
 class TransformerLayer(Module):
-    def __init__(self, d_model, d_k, d_v, n_heads, d_hidden, mask="none", use_layernorms=True):
+    def __init__(self, d_model, d_k, d_v, n_heads, d_hidden, mask="none", use_layernorms=True, use_bitsandbytes=False):
         super().__init__()
         self.d_model = d_model
         self.d_k = d_k
@@ -59,14 +65,18 @@ class TransformerLayer(Module):
         self.n_heads = n_heads
         self.d_hidden = d_hidden
         self.mask = mask
+        self.use_bitsandbytes = use_bitsandbytes
+
+        # if use_bitsandbytes:
+        #     use_layernorms = False # TODO: implement bnb LayerNorm
 
         self.use_layernorms = use_layernorms
 
         if use_layernorms:
             self.ln1 = LayerNorm(d_model)
             self.ln2 = LayerNorm(d_model)
-        self.attn = Attn(d_model, d_k, d_v, n_heads, mask)
-        self.mlp = MLP(d_model, d_hidden, 'GELU', d_model)
+        self.attn = Attn(d_model, d_k, d_v, n_heads, mask, use_bitsandbytes)
+        self.mlp = MLP(d_model, d_hidden, 'GELU', d_model, use_bitsandbytes)
 
     def forward(self, x):
         if self.use_layernorms:
@@ -76,13 +86,18 @@ class TransformerLayer(Module):
 
 
 class LowRankPositionalEncoding(Module):
-    def __init__(self, n_ctx, d_pos, d_model):
+    def __init__(self, n_ctx, d_pos, d_model, use_bitsandbytes):
         super().__init__()
         self.n_ctx = n_ctx
         self.d_model = d_model
         self.d_pos = d_pos
+        self.use_bitsandbytes = use_bitsandbytes
         self.weight = torch.nn.Parameter(0.02*torch.randn(n_ctx, d_pos))
-        self.linear = Linear(d_pos, d_model) #MLP(d_pos, 2*d_model, 'GELU', d_model)
+        if use_bitsandbytes:
+            self.weight = Int8Params(self.weight, has_fp16_weights=False)
+            self.linear = bnb.nn.Linear8bitLt(d_pos, d_model, bias=True, has_fp16_weights=False, threshold=6.0)
+        else:
+            self.linear = Linear(d_pos, d_model) #MLP(d_pos, 2*d_model, 'GELU', d_model)
 
     def forward(self, x):
         n_ctx = x.shape[-2]
@@ -90,15 +105,23 @@ class LowRankPositionalEncoding(Module):
         return x + self.linear(self.weight[:n_ctx])
 
 class PositionalEncoding(Module):
-    def __init__(self, n_ctx, d_model):
+    def __init__(self, n_ctx, d_model, use_bitsandbytes):
         super().__init__()
         self.n_ctx = n_ctx
         self.d_model = d_model
-        self.weight = torch.nn.Parameter(0.02*torch.randn(n_ctx, d_model))
+        self.use_bitsandbytes = use_bitsandbytes 
+        if use_bitsandbytes:
+            self.embedding = bnb.nn.StableEmbedding(n_ctx, d_model)
+        else:
+            self.weight = torch.nn.Parameter(0.02*torch.randn(n_ctx, d_model))
     def forward(self, x):
         n_ctx = x.shape[-2]
         assert n_ctx <= self.n_ctx
-        return x + self.weight[:n_ctx]
+        if self.use_bitsandbytes:
+            weight = self.embedding.weight
+        else:
+            weight = self.weight
+        return x + weight[:n_ctx]
     
 class TransformerLMHead(Module):
     def __init__(self,
@@ -118,6 +141,7 @@ class TransformerLMHead(Module):
                  read_mode='last',
                  read_head_type='linear',
                  use_layernorms=True,
+                 use_bitsandbytes=True,
                  autocast_enabled=None):
         super().__init__()
         self.n_vocab_in = n_vocab_in
@@ -134,24 +158,31 @@ class TransformerLMHead(Module):
         self.autocast_enabled = autocast_enabled or False
         self.mask = mask
         self.use_layernorms = use_layernorms
+        self.use_bitsandbytes = use_bitsandbytes
 
         self.transformerlayers = ModuleList(
-            TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, mask, use_layernorms)
+            TransformerLayer(d_model, d_k, d_v, n_heads, d_hidden, mask, use_layernorms, use_bitsandbytes)
             for _ in range(n_layers))
         
-        self.embedding = Embedding(n_vocab_in, d_model)
+        if use_bitsandbytes:
+            self.embedding = bnb.nn.StableEmbedding(n_vocab_in, d_model)
+        else:
+            self.embedding = Embedding(n_vocab_in, d_model)
 
         self.positional_encoding_mode = positional_encoding_mode
         if positional_encoding_mode == 'standard':
-            self.positional_encoding = PositionalEncoding(n_ctx, d_model)
+            self.positional_encoding = PositionalEncoding(n_ctx, d_model, use_bitsandbytes)
         elif positional_encoding_mode == 'lowrank':
-            self.positional_encoding = LowRankPositionalEncoding(n_ctx, d_pos, d_model)
+            self.positional_encoding = LowRankPositionalEncoding(n_ctx, d_pos, d_model, use_bitsandbytes)
         
         self.read_head_type = read_head_type
         if read_head_type == 'linear':
-            self.read_head = Linear(d_model, n_vocab_out)
+            if use_bitsandbytes:
+                self.read_head = bnb.nn.Linear8bitLt(d_model, n_vocab_out, bias=True, has_fp16_weights=False, threshold=6.0)
+            else:
+                self.read_head = Linear(d_model, n_vocab_out)
         elif read_head_type == 'mlp':
-            self.read_head =  MLP(d_model, d_hidden, 'GELU', n_vocab_out)
+            self.read_head =  MLP(d_model, d_hidden, 'GELU', n_vocab_out, use_bitsandbytes)
 
         if pattern is None:
             self.pattern = list(range(len(self.transformerlayers)))
@@ -198,6 +229,7 @@ class TransformerLMHead(Module):
             'read_head_type': self.read_head_type,
             'mask': self.mask,
             'use_layernorms': self.use_layernorms,
+            'use_bitsandbytes': self.use_bitsandbytes,
         }  
     
     def set_config(self, config):
@@ -212,6 +244,7 @@ class TransformerLMHead(Module):
         self.d_hidden = config.get('d_hidden', self.d_hidden)
         self.n_layers = config.get('n_layers', self.n_layers)
         self.use_layernorms = config.get('use_layernorms', self.use_layernorms)
+        self.use_bitsandbytes = config.get('use_bitsandbytes', self.use_bitsandbytes)
 
 
     def save(self, path):

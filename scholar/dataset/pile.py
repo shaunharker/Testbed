@@ -98,3 +98,40 @@ class PileBytesDataset:
                 return result
             except:
                 self.reader = self.streamer.stream()
+
+import numpy as np
+
+class FastPileBytesDataset:
+    def __init__(self, example_length=512, paths=None, device='cuda'):
+        if paths is None:
+            paths = [f"/data/thepile/00.{i}.utf8" for i in range(10)]
+        self.paths = paths
+        self.device = device
+        self.decode = utf8decode
+        self.encode = utf8encode
+        self.idx = 0
+        self.path_idx = 0
+        self.example_length = example_length
+        self.load_from_dataset()
+
+    def load_from_dataset(self):
+        example_length = self.example_length
+        data = np.fromfile(self.paths[self.path_idx], dtype=np.uint8)
+        n_examples = len(data) // example_length
+        data = data[:n_examples * example_length]
+        data = data.reshape((n_examples, example_length))
+        np.random.shuffle(data)
+        self.data = data
+        self.path_idx += 1
+        if self.path_idx == len(self.paths):
+            self.path_idx = 0
+        self.idx = 0
+
+    def batch(self, batch_size, example_length):
+        if example_length > self.example_length:
+            raise ValueError(f"example_length of {example_length} is unsupported for this instance of FastPileBytesDataset, reconstruct")
+        if self.idx + batch_size > len(self.data):
+            self.load_from_dataset()
+        result = torch.from_numpy(self.data[self.idx:self.idx+batch_size])[:,:example_length].long().to('cuda')
+        self.idx += batch_size
+        return result

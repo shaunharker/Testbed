@@ -8,4 +8,4 @@ from .gutenbergbitsdataset import GutenbergBitsDataset
 from .gutenbergbytesdataset import GutenbergBytesDataset
 from .gutenberggpt2dataset import GutenbergGPT2Dataset
 from .chessdataset import ChessDataset
-from .pile import PileBytesDataset
+from .pile import PileBytesDataset, FastPileBytesDataset

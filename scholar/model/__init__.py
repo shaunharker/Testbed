@@ -1,6 +1,8 @@
 from .nn import SplitExample, Sequential, Lambda, Nonlinearity, CrossEntropyLoss, Softmax, ResidualLayerNorm, MLP, LanguageModel
 from .mlplm import MLPLM
 from .transformer import TransformerLMHead
+from .persephone import Persephone
+
 #from .mutabletransformer import MutableTransformerLM
 
 # from transformers import GPT2LMHeadModel, GPT2Config
