@@ -70,21 +70,26 @@ class Persephone(Module):
     def __init__(self,
                  n_vocab_in=256,
                  n_vocab_out=256,
+                 n_ctx=4096,
                  d_embd=8,
-                 n_ctx=4096):
+                 architecture=None):
         super().__init__()
         self.n_vocab_in = n_vocab_in
         self.n_vocab_out = n_vocab_out
         self.n_ctx = n_ctx
         self.d_embd = d_embd
-        self.n_layers = 0
+        self.architecture = architecture if architecture is not None else []
+
+        self.d_model = d_embd # stores the dimensionality of last layer, which starts and embedding dim.
+
         self.embedding = Embedding(self.n_vocab_in, self.d_embd)
         self.positional_encoding = Embedding(self.n_ctx, self.d_embd)
         self.positional_encoding.weight.data *= 0.02
-        self.dims = [d_embd]
         self.connectors = ModuleList()
         self.layers = ModuleList()
         self.read_heads = ModuleList()
+        for (d_model, d_hidden, d_k, d_v, n_heads) in self.architecture:
+            self.add_layer(d_model, d_hidden, d_k, d_v, n_heads, False)
 
 
     def forward(self, input_ids):
@@ -99,12 +104,20 @@ class Persephone(Module):
             ys.append(y)
         return torch.stack(ys, dim=0)
     
-    def add_layer(self, d_model, d_hidden=None, d_k=None, d_v=None, n_heads=None):
+    def add_layer(self, d_model=None, d_hidden=None, d_k=None, d_v=None, n_heads=None, add_to_architecture=True):
+        if d_model is None:
+            d_model = self.d_model
         if d_k is None:
             if n_heads is not None:
                 d_k = d_model // n_heads
             else:
-                d_k = 64
+                if d_model < 1024:
+                    try:
+                        d_k = {1:1, 2:2, 4:4, 8:4, 16:8, 32:8, 64:16, 128:16, 256:32, 512:32}[d_model]
+                    except:
+                        d_k = min(64, d_model)
+                else:
+                    d_k = 64
         if d_v is None:
             d_v = d_k
         if n_heads is None:
@@ -112,35 +125,36 @@ class Persephone(Module):
         if d_hidden is None:
             d_hidden = 4*d_model
         device = self.embedding.weight.device
-        d_last = self.dims[-1]
-        self.connectors.append(Linear(d_last, d_model).to(device))
+        
+        # issue: when d_model does not change, isn't linear connector superfluous?
+        self.connectors.append(Linear(self.d_model, d_model).to(device))
         self.layers.append(PersephoneLayer(d_model, d_hidden, d_k, d_v, n_heads).to(device))
         self.read_heads.append(Linear(d_model, self.n_vocab_out).to(device))
-        self.n_layers += 1
-        self.dims.append(d_model)
+        if add_to_architecture:
+            self.architecture.append((d_model, d_hidden, d_k, d_v, n_heads))
+        self.d_model = d_model
 
     def get_config(self):
         return {
             'n_vocab_in': self.n_vocab_in,
             'n_vocab_out': self.n_vocab_out,
             'n_ctx': self.n_ctx,
+            'd_embd': self.d_embd,
+            'architecture': self.architecture
         }  
 
-    def set_config(self, config):
-        self.n_vocab_in = config.get('n_vocab_in', self.n_vocab_in)
-        self.n_vocab_out = config.get('n_vocab_out', self.n_vocab_out)
-        self.n_ctx = config.get('n_ctx', self.n_ctx)
 
     def save(self, path):
         torch.save({
-            'model_state_dict': self.state_dict(),
+            'state_dict': self.state_dict(),
             'config': self.get_config()
         }, f=path)
 
     @staticmethod
     def load(path):
         checkpoint = torch.load(path)
-        config = checkpoint.get('config', {})
-        model = Persephone(**config)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        return model
+        config = checkpoint['config']
+        sd = checkpoint['state_dict']
+        module = Persephone(**config)
+        module.load_state_dict(sd)
+        return module
